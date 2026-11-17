@@ -1,0 +1,10 @@
+/build/
+/dist/
+/extracted/
+/generated/
+/logs/
+/tools/builder.py
+__pycache__/
+*.3ds
+*.cci
+*.cxi
