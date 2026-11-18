@@ -8,6 +8,8 @@ constexpr auto hud_lives = 1u;
 constexpr auto hud_reserve = 2u;
 constexpr auto hud_medals = 4u;
 constexpr auto hud_level = 8u;
+constexpr auto hud_reserve_caption = 16u;
+constexpr auto course_parts = hud_lives | hud_reserve | hud_medals | hud_level;
 
 std::atomic<bool> hud_enabled{false};
 std::atomic<SDL_GPUTexture *> hud_latest{nullptr};
@@ -40,6 +42,8 @@ unsigned course_hud_part(const DrawRec &d, uint32_t dims, uint32_t blend) {
         if (left >= 211 && right <= 320 && width == 32 && height == 256) return hud_lives;
         if (left >= 105 && right <= 213 && bottom - top >= 19) return hud_medals;
     }
+    if (width == 128 && height == 128 && left >= 105 && right <= 215 && top >= 110 && bottom <= 144)
+        return hud_reserve | hud_reserve_caption;
     if (left >= 78 && right <= 242 && top >= 49 && bottom <= 215)
         return hud_reserve;
     return 0;
@@ -51,8 +55,9 @@ void append_hud_vertices(const DrawRec &d) {
         old_x = 48; old_y = 21; x = COURSE_HUD_ROW_WIDTH + COURSE_HUD_LABEL_WIDTH / 2.0f; scale = 0.78f;
     } else if (d.hud_part == hud_lives) {
         old_x = 272; old_y = 20; x = 176; scale = 0.80f;
-    } else if (d.hud_part == hud_reserve) {
-        old_x = 160; old_y = 131; x = 111; scale = 0.21f;
+    } else if (d.hud_part & hud_reserve) {
+        old_x = 160; old_y = 131; x = 111;
+        scale = d.hud_part & hud_reserve_caption ? 0.27f : 0.21f;
     } else {
         old_x = 159; old_y = 21; x = 40; scale = 0.82f;
     }
@@ -105,7 +110,7 @@ void draw_course_hud(SDL_GPUCommandBuffer *cmd, SDL_GPUBuffer *vbuf, uint32_t fi
 void publish_course_hud() {
     // Require the status bar and the reserve slot. This
     // keeps similarly placed sprites in the menus and map out of the HUD.
-    if (hud_parts == (hud_lives | hud_reserve | hud_medals | hud_level)) {
+    if ((hud_parts & course_parts) == course_parts) {
         hud_latest.store(hud_targets[hud_slot], std::memory_order_release);
         hud_slot = (hud_slot + 1) % 3;
     } else {

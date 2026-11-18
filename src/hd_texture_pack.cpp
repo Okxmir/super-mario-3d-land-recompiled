@@ -4,6 +4,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -16,6 +17,32 @@ namespace {
 
 using TextureShape = std::tuple<uint32_t, uint32_t, uint32_t>;
 using TextureFiles = std::map<TextureShape, std::map<uint64_t, std::filesystem::path>>;
+
+// The European game has different hashes for a few UI atlases whose sprites
+// and cell positions match these editions in the 1080p pack. Keep exact
+// replacements preferred and let unmatched layouts use the game's own pixels.
+constexpr std::pair<uint64_t, uint64_t> ui_aliases[] = {
+    {0x057677e58805aaf7, 0xb82fd3989f38128c},
+    {0x25d14c9e2097a92f, 0xac881f297f7f642a},
+    {0x2dab0f04fbd84c16, 0x63748a9d8c45099e},
+    {0x3ad3b2990a7d6e27, 0x6e141d76640eb6e9},
+    {0x41503f6038f04979, 0xd20e1b26a9cdd0ff},
+    {0x4267e0c8e8e65349, 0xa260c225dc68f7d1},
+    {0x52586d01a1e81ec9, 0x1a6afcbf8f756704},
+    {0x6bb4d72e77036e75, 0x63748a9d8c45099e},
+    {0x718529eed1c0f82b, 0xcb61832908621ecf},
+    {0x7289df8df2d7afe9, 0xdaddb9eb0edd35be},
+    {0x76c88981fa6fe818, 0xd20e1b26a9cdd0ff},
+    {0x7d2cae81a9ab263c, 0xb0e5299b13441dfc},
+    {0x96a54bbb67b0a290, 0xb0e5299b13441dfc},
+    {0x973380ad23fe1738, 0xfefecca870c405ee},
+    {0xaa61216af8cb5508, 0xe0e0cc0246d11686},
+    {0xad59732c2a07024c, 0xac881f297f7f642a},
+    {0xb069adc6e48f9855, 0x6e141d76640eb6e9},
+    {0xc08b471fcdf59fb7, 0xe0e0cc0246d11686},
+    {0xdcc7047f06224c25, 0x1a6afcbf8f756704},
+    {0xfbd7a467bd47a0d7, 0xdaddb9eb0edd35be},
+};
 
 const TextureFiles &pack_files() {
     static const TextureFiles files = [] {
@@ -48,7 +75,14 @@ PackTexture load_pack_texture(const uint8_t *data, std::size_t size, uint32_t wi
     const auto shape = index.find({width, height, format});
     if (shape == index.end()) return {};
     const uint64_t hash = texture_hash(reinterpret_cast<const char *>(data), size);
-    const auto file = shape->second.find(hash);
+    auto file = shape->second.find(hash);
+    if (file == shape->second.end()) {
+        for (const auto &[original, replacement] : ui_aliases)
+            if (hash == original) {
+                file = shape->second.find(replacement);
+                break;
+            }
+    }
     if (file == shape->second.end()) return {};
     const auto path = file->second.u8string();
     const auto *filename = reinterpret_cast<const char *>(path.c_str());
