@@ -8,7 +8,7 @@ An experimental native Windows x64 and Linux x86-64 port of Super Mario 3D Land.
 - Vulkan rendering with a 60 Hz presentation target and camera-motion smoothing, while preserving the original 30 Hz game logic. Performance depends on the PC and the scene.
 - 1×, 2×, and 4× upscaling with a saved selection. Use the **Upscaling** menu on Windows or **F4** on Linux.
 - Original (5:3), 16:9, and experimental 21:9 aspect ratios. Use **F7** or the localized **Aspect ratio** menu on Windows. The selected format is saved between launches.
-- **Widescreen**, directly below **Original** in the **Aspect ratio** menu, performs the same action as **F9**. It switches between two stacked screens and the upper game screen enlarged with the touchscreen in an inset. The selected layout is saved between launches.
+- **Widescreen** or **F9** enlarges the upper screen. During a course, Vulkan displays the three Star Medals, reserve item and lives between the coin counter and timer, with the course label in the bottom-right corner. Use **R3** or **Tab** to switch between these indicators and the touchscreen inset.
 - Controller and keyboard support, with mouse input for the touchscreen.
 - Build-time selection of eight game languages, including English, French, German, Spanish, Italian, Dutch, Portuguese, and Russian.
 - Local save data with automatic backups during save formatting.
@@ -55,7 +55,7 @@ With Vulkan, wider formats expand the 3D view and **F7** cycles through the thre
 
 The 21:9 mode is experimental. Its wider view can reveal scenery edges or objects outside the original camera view.
 
-The aspect ratio applies to the upper game screen. With two stacked screens, the combined window is taller. Click **Widescreen** below **Original** in the **Aspect ratio** menu, or press **F9**, for the enlarged upper screen with a touchscreen inset. Click it again, or press **F9** again, to restore the stacked screens. Entering the enlarged layout selects the upper screen even when an older setting had swapped the screens. The menu label follows the selected game language.
+The aspect ratio applies to the upper game screen. Click **Widescreen** below **Original** in the **Aspect ratio** menu, or press **F9**, to show the upper screen by itself. Click the right stick (**R3**) or press **Tab** to hide the extra course indicators and show the interactive touchscreen inset in the bottom-right corner. Use **R3** or **Tab** again to hide the inset and bring back the indicators. **F9** or **Widescreen** restores the stacked layout. The layout is saved between launches, and the menu label follows the game language.
 
 The title screen, the opening cinematic, the first world map, and early gameplay in course 1-1 have been checked locally. On first launch, decline StreetPass to play offline.
 

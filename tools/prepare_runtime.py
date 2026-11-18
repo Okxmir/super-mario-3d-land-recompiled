@@ -16,6 +16,38 @@ def edit(path, transform):
 
 def frontend(source):
     source = source.replace('#include <cstdio>', '#include <cstdio>\n#include <cmath>')
+    source = source.replace('#include "settings.h"\n', '#include "settings.h"\n#include "course_hud.h"\n')
+    source = source.replace('int big = s.swap_screens ? 1 : 0, small = 1 - big;',
+                            'int big = s.swap_screens && !s.widescreen_layout() ? 1 : 0, small = 1 - big;')
+    source = source.replace('s.swap_screens = !s.swap_screens, relayout();',
+                            's.toggle_secondary_screen(), relayout();')
+    source = source.replace('        layout.update();\n        s.save();',
+                            '        layout.update();\n        pica::gpu::enable_course_hud(s.widescreen_layout());\n'
+                            '        s.save();')
+    source = source.replace('            SDL_RenderTexture(renderer, t, &src, &layout.rect[i]);', '''            SDL_RenderTexture(renderer, t, &src, &layout.rect[i]);
+            if (i == 0 && shown_gpu[0] && s.widescreen_layout() && !s.picture_in_picture) {
+                using namespace pica::gpu;
+                if (auto *frame = course_hud_frame()) {
+                    auto *hud = gpu_texture(frame, COURSE_HUD_HEIGHT * COURSE_HUD_SCALE,
+                                             COURSE_HUD_WIDTH * COURSE_HUD_SCALE);
+                    if (hud) {
+                        SDL_SetTextureBlendMode(hud, SDL_BLENDMODE_BLEND_PREMULTIPLIED);
+                        // The top row and level label are adjacent in the rotated texture.
+                        const auto &screen = layout.rect[0];
+                        auto draw_hud = [&](float offset, float width, float left, float center_y) {
+                            const SDL_FRect source{0, offset * COURSE_HUD_SCALE, float(hud->w),
+                                                   width * COURSE_HUD_SCALE};
+                            const SDL_FRect dest{screen.x + left + (width - COURSE_HUD_HEIGHT) / 2.0f,
+                                                 screen.y + center_y - width / 2.0f,
+                                                 float(COURSE_HUD_HEIGHT), width};
+                            SDL_RenderTextureRotated(renderer, hud, &source, &dest, -90.0, nullptr, SDL_FLIP_NONE);
+                        };
+                        draw_hud(0, COURSE_HUD_ROW_WIDTH, 100, 19);
+                        draw_hud(COURSE_HUD_ROW_WIDTH, COURSE_HUD_LABEL_WIDTH,
+                                 screen.w - COURSE_HUD_LABEL_WIDTH - 8, screen.h - 21);
+                    }
+                }
+            }''')
     source = source.replace(
         '        const float W[2] = {top_width, float(BOTTOM_WIDTH)}, H = float(SCREEN_HEIGHT);',
         '''        constexpr float top_widths[] = {float(TOP_WIDTH), SCREEN_HEIGHT * 16.0f / 9.0f,
@@ -77,9 +109,23 @@ def frontend(source):
     Layout selected;
     selected.top_width = 428.0f;
     selected.update();
-    if (!s.single_screen || s.swap_screens || s.smart_layout || !s.picture_in_picture ||
-        selected.first != 0 || !selected.shown[1] || selected.rect[1].h >= selected.rect[0].h)
-        fatal("F9 did not select the upper screen with a touchscreen inset");
+    if (!s.widescreen_layout() || s.swap_screens || s.picture_in_picture ||
+        selected.first != 0 || !selected.shown[0] || selected.shown[1])
+        fatal("F9 did not select the upper screen on its own");
+    s.toggle_secondary_screen();
+    selected.update();
+    const auto &inset = selected.rect[1];
+    float tx, ty;
+    if (selected.first != 0 || !selected.shown[0] || !selected.shown[1] ||
+        std::fabs(inset.x + inset.w - (selected.w - 4)) > 0.001f ||
+        std::fabs(inset.y + inset.h - (selected.h - 4)) > 0.001f ||
+        !selected.touch_at(inset.x + inset.w / 2, inset.y + inset.h / 2, tx, ty) ||
+        std::fabs(tx - 160.0f) > 0.001f || std::fabs(ty - 120.0f) > 0.001f)
+        fatal("Tab/R3 did not show an interactive lower-right touchscreen inset");
+    s.toggle_secondary_screen();
+    selected.update();
+    if (selected.first != 0 || selected.shown[1])
+        fatal("Tab/R3 did not restore the upper screen on its own");
     s.toggle_screen_layout();
     selected.update();
     if (s.single_screen || selected.h != 2 * SCREEN_HEIGHT)
@@ -729,7 +775,7 @@ void submit_commands(SDL_GPUCommandBuffer *cmd) {
         "    if (interp_this) for (auto &l : surface_loads) reloaded.push_back(l.surface);",
     )
     source = reuse_upload_buffer(source)
-    return lcd_smoothing(land_lcd(source))
+    return course_hud_gpu(lcd_smoothing(land_lcd(source)))
 
 
 def lcd_smoothing(source):
@@ -896,6 +942,43 @@ uint32_t batch_capacity(size_t size) {
         "    size_t at = 0;")
     source = source.replace("    SDL_EndGPUCopyPass(copy);\n    SDL_ReleaseGPUTransferBuffer(dev, tb);\n\n    // surface loads",
                             "    SDL_EndGPUCopyPass(copy);\n\n    // surface loads")
+    return source
+
+
+def course_hud_gpu(source):
+    source = source.replace('#include "gpu.h"', '#include "gpu.h"\n#include "course_hud.h"')
+    source = source.replace('    uint32_t first, count;\n', '    uint32_t first, count;\n    unsigned hud_part = 0;\n', 1)
+    source = source.replace('void end_draw() {', '#include "course_hud_gpu.inc"\n\nvoid end_draw() {')
+    source = source.replace(
+        '        batch.push_back(cur);',
+        '        cur.hud_part = course_hud_part(cur, regs[TEX0_DIM], regs[BLEND_FUNC]);\n'
+        '        batch.push_back(cur);')
+    source = source.replace(
+        '    clear_fresh(cmd);\n    upload_pending(cmd, &vbuf);',
+        '''    clear_fresh(cmd);
+    const uint32_t hud_first = uint32_t(vertices.size());
+    if (hud_enabled.load(std::memory_order_relaxed)) {
+        for (const auto &draw : batch)
+            if (draw.hud_part) append_hud_vertices(draw);
+    }
+    const bool has_hud_draws = vertices.size() != hud_first;
+    upload_pending(cmd, &vbuf);''')
+    source = source.replace(
+        '    submit_commands(cmd);\n    if (vbuf) SDL_ReleaseGPUBuffer(dev, vbuf);',
+        '    if (vbuf && has_hud_draws) draw_course_hud(cmd, vbuf, hud_first);\n'
+        '    submit_commands(cmd);\n    if (vbuf) SDL_ReleaseGPUBuffer(dev, vbuf);')
+    source = source.replace(
+        '    if (alias && overwritten(src)) return false;',
+        '    if (land_bottom) publish_course_hud();\n    if (alias && overwritten(src)) return false;')
+    source = source.replace('std::vector<SDL_GPUTexture *> take_retired_scanouts() {', '''void enable_course_hud(bool enabled) {
+    hud_enabled.store(enabled, std::memory_order_relaxed);
+}
+
+SDL_GPUTexture *course_hud_frame() {
+    return hud_latest.load(std::memory_order_acquire);
+}
+
+std::vector<SDL_GPUTexture *> take_retired_scanouts() {''')
     return source
 
 
@@ -1351,8 +1434,15 @@ def prepare(upstream, output):
         if (single_screen) {
             swap_screens = false;
             smart_layout = false;
-            picture_in_picture = true;
+            picture_in_picture = false;
         }
+    }
+    bool widescreen_layout() const { return single_screen && !smart_layout; }
+    void toggle_secondary_screen() {
+        if (widescreen_layout())
+            picture_in_picture = !picture_in_picture;
+        else
+            swap_screens = !swap_screens;
     }'''))
     edit(src / "frontend/settings.cpp", lambda source: source.replace(
         'else if (k == "volume") volume = std::atoi(v.c_str());',
