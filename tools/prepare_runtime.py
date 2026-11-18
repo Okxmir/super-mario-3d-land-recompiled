@@ -1454,6 +1454,7 @@ def applets(source):
         "constexpr uint32_t ERROR_RESULT_OFFSET = 0xf70;").replace(
         "namespace hle {\nnamespace {",
         "namespace hle {\nvoid reply_sm3dl_shared_font(Request &req);\n"
+        "void reply_apt_wrap(Request &req);\n"
         "std::vector<uint8_t> local_mii_selection();\nnamespace {").replace(
         "    Parameter parameter;",
         "    Parameter parameter;\n    uint32_t prepared_applet = 0;\n    std::vector<uint8_t> applet_reply;").replace(
@@ -1535,6 +1536,10 @@ def applets(source):
             break;
         case 0x0044: // GetSharedFont
             reply_sm3dl_shared_font(req);
+            break;
+        case 0x0046: // Wrap
+        case 0x0047: // Unwrap
+            reply_apt_wrap(req);
             break;
         case 0x004B:""")
 

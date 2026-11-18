@@ -31,6 +31,10 @@ const RecompEntry *functions() { return recomp_functions; }
 size_t function_count() { return recomp_function_count; }
 }
 
+namespace hle {
+int verify_apt_wrap();
+}
+
 namespace {
 constexpr uint64_t europe_title = 0x0004000000053F00;
 constexpr const char *cartridge_required =
@@ -249,6 +253,7 @@ int run_game(int argc, Char **argv) {
     if (argc == 2 && option == "--verify-aspect-ratio") return frontend::verify_aspect_ratio();
     if (argc == 2 && option == "--verify-textures") return verify_texture_updates();
     if (argc == 2 && option == "--verify-display-colors") return verify_display_colors();
+    if (argc == 2 && option == "--verify-apt-wrap") return hle::verify_apt_wrap();
     const bool verify = argc == 3 && option == "--verify-startup";
     if ((argc > 2 && !verify) || (argc == 2 && option == "--help")) {
         std::puts("SuperMario3DLandRecompiled [path to a decrypted European ROM (.3ds, .cci, .cxi)]");

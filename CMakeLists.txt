@@ -78,7 +78,7 @@ set(RUNTIME_FILES
 list(TRANSFORM RUNTIME_FILES PREPEND "${RUNTIME}/src/")
 
 add_executable(SuperMario3DLand src/main.cpp src/shared_font.cpp src/save_storage.cpp src/pica_shader_jit.cpp
-    src/cecd.cpp src/microphone.cpp src/local_mii.cpp src/hd_texture_pack.cpp src/cityhash64.cpp ${RUNTIME_FILES})
+    src/cecd.cpp src/microphone.cpp src/local_mii.cpp src/apt_wrap.cpp src/hd_texture_pack.cpp src/cityhash64.cpp ${RUNTIME_FILES})
 set_target_properties(SuperMario3DLand PROPERTIES OUTPUT_NAME SuperMario3DLandRecompiled)
 target_include_directories(SuperMario3DLand PRIVATE "${RUNTIME}/include" "${RUNTIME}/src" src "${UPSTREAM}/xbyak-df112862583c2d327c1d9782fd28f53aa675f11d")
 target_link_libraries(SuperMario3DLand PRIVATE game_code SDL3::SDL3)
@@ -113,6 +113,7 @@ add_test(NAME etc1a4_texture_updates COMMAND SuperMario3DLand --verify-textures)
 add_test(NAME native_display_colors COMMAND SuperMario3DLand --verify-display-colors)
 add_test(NAME gamepad_mapping COMMAND SuperMario3DLand --verify-gamepad)
 add_test(NAME display_aspect_ratios COMMAND SuperMario3DLand --verify-aspect-ratio)
+add_test(NAME mystery_box_applet_wrap COMMAND SuperMario3DLand --verify-apt-wrap)
 
 set(LCD_HEADER "${CMAKE_CURRENT_BINARY_DIR}/sm3dl_lcd.inc")
 add_custom_command(OUTPUT "${LCD_HEADER}"
