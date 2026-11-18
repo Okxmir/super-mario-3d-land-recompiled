@@ -201,7 +201,10 @@ Input input() {""")
     source = source.replace(
         "            SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);",
         "            SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);\n"
-        "            SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, false);")
+        "            SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, false);\n"
+        "#ifdef __linux__\n"
+        "            SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_VULKAN_REQUIRE_HARDWARE_ACCELERATION_BOOLEAN, true);\n"
+        "#endif")
     source = source.replace(
         "    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {",
         """#ifdef _WIN32
@@ -1413,6 +1416,14 @@ def prepare(upstream, output):
         "    exefs_files_ = std::move(game.exefs_files);\n    romfs_offset_ = game.romfs_offset"))
     edit(src / "hle/gsp.cpp", lambda source: source.replace(
         "    } lcd[2];", "    } lcd[2];\n    std::array<uint32_t, 3> left_eye{};\n    std::array<uint32_t, 3> right_eye{};").replace(
+        '            if (static const bool hold = std::getenv("YW2_GPU_HOLD_CPU") != nullptr; hold) {',
+        """            static const bool hold = std::getenv("YW2_GPU_HOLD_CPU") != nullptr;
+#ifdef __linux__
+            // Keep software rendering and guest command completion on the same thread.
+            if (hold || !pica::gpu::active()) {
+#else
+            if (hold) {
+#endif""").replace(
         "            SDL_GPUTexture *frame = screen == 0 ? pica::gpu::top_frame(&gw, &gh) : nullptr;",
         """            bool interpolated = false;
             SDL_GPUTexture *frame = screen == 0 ? pica::gpu::top_frame(lcd[0].addr, &gw, &gh, &interpolated) : nullptr;
