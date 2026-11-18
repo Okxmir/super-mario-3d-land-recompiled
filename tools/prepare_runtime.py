@@ -32,7 +32,7 @@ def frontend(source):
         // Three canvas units per native pixel represent the 16:9 width exactly.
         SDL_SetRenderScale(renderer, 3.0f, 3.0f);''')
     source = source.replace(
-        's.single_screen = !s.single_screen, relayout();', 's.toggle_screen_layout(), relayout();')
+        '                if (e.key.scancode == SDL_SCANCODE_F9) s.single_screen = !s.single_screen, relayout();\n', '')
     source = source.replace('#include "handoff.h"\n', '').replace('#include "launcher.h"\n', '')
     source = source.replace('#include "settings.h"\n',
                             '#include "settings.h"\n#include "resolution_menu.h"\n#include "virtual_gamepad.h"\n')
@@ -316,6 +316,12 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
     source = source.replace(
         "        while (SDL_PollEvent(&e)) {\n",
         """        while (SDL_PollEvent(&e)) {
+            if (e.type == ResolutionMenu::layout_toggle_event() ||
+                (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F9)) {
+                s.toggle_screen_layout();
+                relayout();
+                continue;
+            }
             if ((e.type >= SDL_EVENT_WINDOW_FIRST && e.type <= SDL_EVENT_WINDOW_LAST) ||
                 e.type == SDL_EVENT_RENDER_TARGETS_RESET)
                 redraw_requested = true;

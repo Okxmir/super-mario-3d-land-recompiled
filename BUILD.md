@@ -20,7 +20,7 @@ The 21:9 option is marked experimental because the expanded view can reveal scen
 
 The 16:9 and 21:9 options require Vulkan. With the Direct3D 11 fallback, the game uses the original format and disables the wider menu options. A saved widescreen preference is kept for the next Vulkan launch.
 
-The selected ratio applies to the upper game screen. Press **F9** to switch from two stacked screens to the enlarged upper screen with a touchscreen inset. Press **F9** again to restore the stacked layout. The layout is saved between launches. The 16:9 display uses an exact 1280 × 720 logical canvas in the enlarged layout, with a centered crop of the slightly wider GPU render target.
+The selected ratio applies to the upper game screen. Click **Widescreen** directly below **Original** in the **Aspect ratio** menu, or press **F9**, to switch from two stacked screens to the enlarged upper screen with a touchscreen inset. Use either control again to restore the stacked layout. The menu label follows the chosen game language. The layout is saved between launches. The 16:9 display uses an exact 1280 × 720 logical canvas in the enlarged layout, with a centered crop of the slightly wider GPU render target.
 
 To use an installed toolchain, omit `-Portable`. This path requires 64-bit Python 3.11 or later with pip and Visual Studio with **Desktop development with C++**, the Windows SDK, and CMake tools. Use `-OutputDirectory` to choose a different destination for either build.
 

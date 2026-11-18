@@ -8,7 +8,7 @@ An experimental native Windows x64 port of Super Mario 3D Land. It recompiles th
 - Vulkan rendering with a 60 Hz presentation target and camera-motion smoothing, while preserving the original 30 Hz game logic. Performance depends on the PC and the scene.
 - **Upscaling** menu with 1×, 2×, and 4× options and a saved selection between launches.
 - **Aspect ratio** menu with Original (5:3), 16:9, and experimental 21:9 options. Its labels follow the selected game language, and the selected format is saved between launches.
-- **F9** switches between two stacked screens and the upper game screen enlarged with the touchscreen in an inset. The selected layout is saved between launches.
+- **Widescreen**, directly below **Original** in the **Aspect ratio** menu, performs the same action as **F9**. It switches between two stacked screens and the upper game screen enlarged with the touchscreen in an inset. The selected layout is saved between launches.
 - Controller and keyboard support, with mouse input for the touchscreen.
 - Build-time selection of eight game languages, including English, French, German, Spanish, Italian, Dutch, Portuguese, and Russian.
 - Local save data with automatic backups during save formatting.
@@ -40,7 +40,7 @@ Beside **Upscaling**, the **Aspect ratio** menu selects the upper screen's forma
 
 The 21:9 mode is experimental. Its wider view can reveal scenery edges or objects outside the original camera view.
 
-The aspect ratio applies to the upper game screen. With two stacked screens, the combined window is taller. Press **F9** for the enlarged upper screen with a touchscreen inset, and press **F9** again to restore the stacked screens. Entering the enlarged layout selects the upper screen even when an older setting had swapped the screens.
+The aspect ratio applies to the upper game screen. With two stacked screens, the combined window is taller. Click **Widescreen** below **Original** in the **Aspect ratio** menu, or press **F9**, for the enlarged upper screen with a touchscreen inset. Click it again, or press **F9** again, to restore the stacked screens. Entering the enlarged layout selects the upper screen even when an older setting had swapped the screens. The menu label follows the selected game language.
 
 The title screen, the opening cinematic, the first world map, and early gameplay in course 1-1 have been checked locally. On first launch, decline StreetPass to play offline.
 

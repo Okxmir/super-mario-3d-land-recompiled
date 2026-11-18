@@ -50,6 +50,7 @@ public:
             !AppendMenuW(choices_, MF_STRING, first_command + 1, scale_labels[1]) ||
             !AppendMenuW(choices_, MF_STRING, first_command + 2, scale_labels[2]) ||
             !AppendMenuW(aspects_, MF_STRING, first_aspect, original_label()) ||
+            !AppendMenuW(aspects_, MF_STRING, layout_command, widescreen_label()) ||
             !AppendMenuW(aspects_, MF_STRING, first_aspect + 1, L"16:9") ||
             !AppendMenuW(aspects_, MF_STRING, first_aspect + 2, ultrawide_label()) ||
             !SetWindowSubclass(hwnd_, window_proc, subclass_id, reinterpret_cast<DWORD_PTR>(this))) {
@@ -70,8 +71,8 @@ public:
         title.fMask &= ~MIIM_ID;
         for (UINT i = 0; i < 3; ++i) {
             SetMenuItemInfoW(choices_, i, TRUE, &title);
-            SetMenuItemInfoW(aspects_, i, TRUE, &title);
         }
+        for (UINT i = 0; i < 4; ++i) SetMenuItemInfoW(aspects_, i, TRUE, &title);
         update_theme();
         update_checks();
     }
@@ -96,10 +97,16 @@ public:
         if (GetMenu(hwnd_) != menu && SetMenu(hwnd_, menu)) DrawMenuBar(hwnd_);
     }
 
+    static Uint32 layout_toggle_event() {
+        static const Uint32 type = SDL_RegisterEvents(1);
+        return type;
+    }
+
 private:
     static constexpr UINT_PTR subclass_id = 1;
     static constexpr UINT first_command = 0x5100;
     static constexpr UINT first_aspect = 0x5110;
+    static constexpr UINT layout_command = 0x5113;
     static constexpr UINT first_title = 0x5120;
     static constexpr int scales[] = {1, 2, 4};
     static constexpr const wchar_t *scale_labels[] = {L"1\u00d7", L"2\u00d7", L"4\u00d7"};
@@ -107,7 +114,7 @@ private:
 
     static bool is_scale(UINT item) { return item >= first_command && item < first_command + 3; }
     static bool is_aspect(UINT item) { return item >= first_aspect && item < first_aspect + 3; }
-    static bool is_choice(UINT item) { return is_scale(item) || is_aspect(item); }
+    static bool is_choice(UINT item) { return is_scale(item) || is_aspect(item) || item == layout_command; }
 
     const wchar_t *aspect_title() const {
         switch (settings_.language) {
@@ -131,6 +138,19 @@ private:
         }
     }
 
+    const wchar_t *widescreen_label() const {
+        switch (settings_.language) {
+        case 2: return L"\u00c9cran large";
+        case 3: return L"Breitbild";
+        case 4: return L"Schermo panoramico";
+        case 5: return L"Pantalla panor\u00e1mica";
+        case 8: return L"Breedbeeld";
+        case 9: return L"Ecr\u00e3 panor\u00e2mico";
+        case 10: return L"\u0428\u0438\u0440\u043e\u043a\u0438\u0439 \u044d\u043a\u0440\u0430\u043d";
+        default: return L"Widescreen";
+        }
+    }
+
     const wchar_t *ultrawide_label() const {
         switch (settings_.language) {
         case 2: return L"21:9 (exp\u00e9rimental)";
@@ -144,6 +164,7 @@ private:
 
     const wchar_t *item_label(UINT item) const {
         if (is_scale(item)) return scale_labels[item - first_command];
+        if (item == layout_command) return widescreen_label();
         if (is_aspect(item)) {
             if (item == first_aspect) return original_label();
             return item == first_aspect + 1 ? L"16:9" : ultrawide_label();
@@ -235,6 +256,8 @@ private:
     void update_checks() const {
         const bool wide_available = pica::gpu::active();
         const int active_aspect = wide_available ? settings_.aspect_ratio : 0;
+        CheckMenuItem(aspects_, layout_command,
+                      MF_BYCOMMAND | (settings_.single_screen ? MF_CHECKED : MF_UNCHECKED));
         for (UINT i = 0; i < 3; ++i) {
             CheckMenuItem(choices_, first_command + i,
                           MF_BYCOMMAND | (scales[i] == settings_.resolution ? MF_CHECKED : MF_UNCHECKED));
@@ -289,6 +312,13 @@ private:
         }
         if (message == WM_COMMAND && HIWORD(wparam) == 0 && lparam == 0) {
             const UINT command = LOWORD(wparam);
+            if (command == layout_command) {
+                SDL_Event action{};
+                action.type = layout_toggle_event();
+                if (!action.type || !SDL_PushEvent(&action))
+                    LOG("window: could not request a screen layout change: %s", SDL_GetError());
+                return 0;
+            }
             if (is_scale(command)) {
                 const int scale = scales[command - first_command];
                 if (menu.settings_.resolution != scale) {
