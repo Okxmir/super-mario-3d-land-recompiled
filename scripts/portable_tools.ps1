@@ -60,10 +60,31 @@ function Initialize-Sm3dlPortableTools {
         $standardLibrary = Get-Sm3dlVerifiedArchive "rust-std-$rust.tar.xz" "$base/rust-std-$rust.tar.xz" `
             '5E63B95C73BD783864B4350792C27292D67AAB8E3033BF49381D0E55EF4384CF' $downloads
         New-Item -ItemType Directory -Path "$root/rust" -Force | Out-Null
-        & tar.exe -xf $compiler -C "$root/rust" --strip-components=2 "rustc-$rust/rustc"
-        if ($LASTEXITCODE -ne 0) { throw 'Could not unpack portable Rust.' }
-        & tar.exe -xf $standardLibrary -C "$root/rust" --strip-components=2 "rust-std-$rust/rust-std-$target"
-        if ($LASTEXITCODE -ne 0) { throw 'Could not unpack the portable Rust standard library.' }
+        # Some Windows tar versions delegate .xz decompression to an external xz.exe.
+        $extractRustComponent = @'
+import sys
+import tarfile
+
+archive, destination, component = sys.argv[1:]
+prefix = component + '/'
+
+def strip_component(member, target):
+    if member.name.startswith(prefix) and member.name != prefix:
+        relative = member.replace(name=member.name[len(prefix):], deep=False)
+        return tarfile.data_filter(relative, target)
+    return None
+
+with tarfile.open(archive, 'r|xz', stream=True) as package:
+    package.extractall(destination, filter=strip_component)
+'@
+        & $python -c $extractRustComponent $compiler "$root/rust" "rustc-$rust/rustc"
+        if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath "$root/rust/bin/rustc.exe" -PathType Leaf)) {
+            throw 'Could not unpack portable Rust.'
+        }
+        & $python -c $extractRustComponent $standardLibrary "$root/rust" "rust-std-$rust/rust-std-$target"
+        if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath "$root/rust/lib/rustlib/$target/lib" -PathType Container)) {
+            throw 'Could not unpack the portable Rust standard library.'
+        }
         New-Item -ItemType File -Path $rustReady -Force | Out-Null
     }
 
