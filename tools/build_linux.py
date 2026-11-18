@@ -124,11 +124,8 @@ def prepare_game(args, clockwork):
         candidate = cxi
         if args.cartridge.resolve() != cxi:
             candidate = Path(work) / cxi.name
-            if args.cartridge.suffix.lower() == ".cxi":
-                shutil.copyfile(args.cartridge, candidate)
-            else:
-                options = ["--key-file", args.key_file.resolve()] if args.key_file else []
-                python("tools/cartridge.py", args.cartridge.resolve(), "--extract", candidate, *options)
+            options = ["--key-file", args.key_file.resolve()] if args.key_file else []
+            python("tools/cartridge.py", args.cartridge.resolve(), "--extract", candidate, *options)
         python("tools/verify_extraction.py", candidate)
         code = Path(work) / "code"
         subprocess.run([tools / "ctrx", "--code-only", candidate, code], check=True)

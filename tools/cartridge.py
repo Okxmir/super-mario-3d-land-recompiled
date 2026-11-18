@@ -13,6 +13,11 @@ from pathlib import Path
 
 ROM_TYPES = {".3ds", ".cci", ".cxi"}
 REQUIRED_REGIONS = ("ExHeader", "ExeFS", "RomFS")
+# Fingerprint of the full ExHeader in the supported European revision.
+EUROPE_EXHEADER_SHA256 = bytes.fromhex("94e61359c80498495dd77bb2df16f0def6fca94fca736dc8c3c929279b44d2c8")
+EUROPE_PACKED_CODE_SHA256 = bytes.fromhex("e56bb54f32d681dfe16f00355b9bcc374fff056767129944212d3566df3e2554")
+EUROPE_CODE_SHA256 = bytes.fromhex("e1d7e188ff88467df776c17cec45c44857fadf5b699944baa8cddcae7d939e64")
+EUROPE_CODE_SIZE = 0x2F4000
 
 
 def u32(data, offset):
@@ -94,6 +99,107 @@ def printable_ascii(data):
     return data.split(b"\0", 1)[0].decode("ascii", errors="replace")
 
 
+def is_european_mario(header):
+    return (printable_ascii(header[0x150:0x160]) == "CTR-P-AREP" and
+            int.from_bytes(header[0x118:0x120], "little") == 0x0004000000053F00)
+
+
+def can_repair_digest(stream, base, header, name, region):
+    # Only replace the digest of the exact, known plaintext ExHeader.
+    return (name == "ExHeader" and region == (512, 0x800, 0x400, 0x160, 1) and
+            is_european_mario(header) and
+            hashlib.sha256(read_at(stream, base + 512, 0x800)).digest() == EUROPE_EXHEADER_SHA256)
+
+
+def region_digest(stream, base, region):
+    offset, _, length, _, _ = region
+    digest = hashlib.sha256()
+    while length:
+        block = read_at(stream, base + offset, min(length, 1024 * 1024))
+        digest.update(block)
+        offset += len(block)
+        length -= len(block)
+    return digest.digest()
+
+
+def has_plain_exheader(stream, base, header, region):
+    _, _, length, digest_at, _ = region
+    return bool(length) and (region_digest(stream, base, region) == header[digest_at:digest_at + 32] or
+                             can_repair_digest(stream, base, header, "ExHeader", region))
+
+
+def unpack_code(image):
+    # BLZ stores tokens backwards, with the size of the decoded code in its footer.
+    if len(image) < 8:
+        raise ValueError("Invalid compressed game code.")
+    layout, extra = struct.unpack_from("<II", image, len(image) - 8)
+    footer, region = layout >> 24, layout & 0xFFFFFF
+    if not 8 <= footer <= region <= len(image):
+        raise ValueError("Invalid compressed game code footer.")
+    if len(image) + extra != EUROPE_CODE_SIZE:
+        return b""
+    decoded = bytearray(EUROPE_CODE_SIZE)
+    decoded[:len(image)] = image
+    src, stop, dst = len(image) - footer, len(image) - region, len(decoded)
+    while src > stop:
+        src -= 1
+        controls = image[src]
+        for bit in range(7, -1, -1):
+            if src <= stop:
+                break
+            if controls & (1 << bit):
+                if src - stop < 2:
+                    raise ValueError("Truncated compressed game code.")
+                src -= 2
+                pair = image[src] | (image[src + 1] << 8)
+                count, distance = (pair >> 12) + 3, (pair & 0xFFF) + 2
+                if dst - count < stop or dst + distance >= len(decoded):
+                    raise ValueError("Invalid reference in compressed game code.")
+                for _ in range(count):
+                    decoded[dst - 1] = decoded[dst + distance]
+                    dst -= 1
+            else:
+                src -= 1
+                dst -= 1
+                if dst < stop:
+                    raise ValueError("Invalid length in compressed game code.")
+                decoded[dst] = image[src]
+    if dst != stop:
+        raise ValueError("Incomplete compressed game code.")
+    return decoded
+
+
+def verify_supported_code(stream, base, regions):
+    exefs, size, *_ = regions["ExeFS"]
+    if size < 512:
+        raise ValueError("The ROM has an invalid ExeFS header.")
+    directory = read_at(stream, base + exefs, 512)
+    for index in range(10):
+        name, offset, length = struct.unpack_from("<8sII", directory, index * 16)
+        if name.rstrip(b"\0") != b".code":
+            continue
+        if not 0 < length <= size - 512 - offset:
+            raise ValueError("The ROM has an invalid ExeFS game code entry.")
+        if length > EUROPE_CODE_SIZE:
+            break
+        code = read_at(stream, base + exefs + 512 + offset, length)
+        digest = hashlib.sha256(code).digest()
+        hash_at = 512 - (index + 1) * 32
+        if digest != directory[hash_at:hash_at + 32]:
+            raise ValueError("The ROM's ExeFS game code failed its SHA-256 check.")
+        compressed = read_at(stream, base + regions["ExHeader"][0] + 0xD, 1)[0] & 1
+        if compressed and digest == EUROPE_PACKED_CODE_SHA256:
+            return
+        if compressed:
+            digest = hashlib.sha256(unpack_code(code)).digest()
+        if digest == EUROPE_CODE_SHA256:
+            return
+        break
+    else:
+        raise ValueError("The ROM has no ExeFS game code.")
+    raise ValueError("This European ROM has different game code. Use the supported original revision of CTR-P-AREP.")
+
+
 def integrity_error(region, encrypted):
     if encrypted:
         return f"{region} SHA-256 mismatch after decryption. Check the key and your ROM dump."
@@ -102,7 +208,7 @@ def integrity_error(region, encrypted):
 
 
 def validate_decrypted_rom(path):
-    """Check the region, decryption flag and NCCH hashes before starting a build."""
+    """Check the plaintext NCCH headers and supported game code before building."""
     path = path.resolve(strict=True)
     if not path.is_file() or path.suffix.lower() not in ROM_TYPES:
         raise ValueError("Choose a .3ds, .cci, or .cxi file.")
@@ -114,28 +220,22 @@ def validate_decrypted_rom(path):
         except ValueError as error:
             raise ValueError("The file is not a readable Nintendo 3DS ROM.") from error
 
-        if (printable_ascii(header[0x150:0x160]) != "CTR-P-AREP" or
-                int.from_bytes(header[0x118:0x120], "little") != 0x0004000000053F00):
+        if not is_european_mario(header):
             raise ValueError("Choose the European Super Mario 3D Land ROM (CTR-P-AREP).")
-        if not header[0x18F] & 4:
-            raise ValueError("This ROM is encrypted. Choose a decrypted European copy.")
         if any(name not in regions for name in REQUIRED_REGIONS):
             raise ValueError("The ROM is missing required game data.")
+        if not header[0x18F] & 4 and not has_plain_exheader(stream, base, header, regions["ExHeader"]):
+            raise ValueError("The ROM could not be verified as decrypted. Choose a decrypted European copy.")
 
         for name in REQUIRED_REGIONS:
-            offset, _, length, digest_at, _ = regions[name]
+            region = regions[name]
+            _, _, length, digest_at, _ = region
             if not length:
                 raise ValueError(f"The ROM is missing the {name} integrity data.")
-            digest = hashlib.sha256()
-            stream.seek(base + offset)
-            while length:
-                block = stream.read(min(length, 1024 * 1024))
-                if not block:
-                    raise ValueError(f"The ROM ends inside its {name} region.")
-                digest.update(block)
-                length -= len(block)
-            if digest.digest() != header[digest_at:digest_at + 32]:
+            if (region_digest(stream, base, region) != header[digest_at:digest_at + 32] and
+                    not can_repair_digest(stream, base, header, name, region)):
                 raise ValueError(integrity_error(name, encrypted=False))
+        verify_supported_code(stream, base, regions)
     return path
 
 
@@ -193,7 +293,9 @@ def extract_primary(stream, size, output, key_file):
     header, length, regions = read_partition(stream, offset, length, 0)
     if any(name not in regions for name in REQUIRED_REGIONS):
         raise ValueError("The primary partition is missing executable data")
-    encrypted = not bool(header[0x18F] & 4)
+    marked_encrypted = not bool(header[0x18F] & 4)
+    encrypted = marked_encrypted and not (
+        is_european_mario(header) and has_plain_exheader(stream, offset, header, regions["ExHeader"]))
     key_x = None
     if encrypted:
         if header[0x112:0x114] != b"\x02\x00" or header[0x18B] != 0 or header[0x18F] & 0x21:
@@ -210,23 +312,36 @@ def extract_primary(stream, size, output, key_file):
     # Publish only after the original NCCH digests match the extracted bytes.
     with tempfile.TemporaryDirectory(dir=output.parent, prefix=".ncch-") as temp:
         staged = Path(temp) / "partition.cxi"
-        with staged.open("xb") as out:
+        with staged.open("x+b") as out:
             local_header = bytearray(header)
-            if encrypted:
+            if marked_encrypted:
                 local_header[0x18F] |= 4
+                if not encrypted:
+                    print("Verified plaintext ExHeader despite the encryption flag.")
             out.write(local_header)
+            repaired = False
             cursor = 512
-            for name, (start, count, hash_size, hash_offset, kind) in sorted(
+            for name, region in sorted(
                 regions.items(), key=lambda pair: pair[1][0]
             ):
+                start, count, hash_size, hash_offset, kind = region
                 copy_region(stream, out, offset + cursor, start - cursor)
                 decryptor = make_decryptor(header, key_x, kind) if encrypted and kind else None
                 digest = copy_region(stream, out, offset + start, count, decryptor, hash_size)
                 if hash_size and digest != header[hash_offset:hash_offset + 32]:
-                    raise ValueError(integrity_error(name, encrypted))
+                    position = out.tell()
+                    if encrypted or not can_repair_digest(out, 0, header, name, region):
+                        raise ValueError(integrity_error(name, encrypted))
+                    out.seek(position)
+                    local_header[hash_offset:hash_offset + 32] = digest
+                    repaired = True
+                    print("Restored the ExHeader digest in the build copy.")
                 print(f"{name}: {count} bytes" + (", SHA-256 verified" if hash_size else ""))
                 cursor = start + count
             copy_region(stream, out, offset + cursor, length - cursor)
+            if repaired:
+                out.seek(0)
+                out.write(local_header)
         staged.rename(output)
     print(output)
 

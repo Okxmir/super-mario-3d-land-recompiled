@@ -1146,7 +1146,7 @@ def texture(source):
                     for (uint32_t col = 0; col < 8; ++col) {
                         uint32_t pixel;
                         std::memcpy(&pixel, tile + morton8(col, row) * 4, 4);
-                        pixel = _byteswap_ulong(pixel);
+                        pixel = SDL_Swap32(pixel);
                         std::memcpy(out + col * 4, &pixel, 4);
                     }
                 }
@@ -1189,7 +1189,7 @@ def texture(source):
                         }
                     }
         return;
-    }""").replace("#include <algorithm>", "#include <algorithm>\n#include <cstring>")
+    }""").replace("#include <algorithm>", "#include <algorithm>\n#include <cstring>\n#include <SDL3/SDL_endian.h>")
     return source.replace("Rgba sample_texture(const Texture &t, float u, float v) {",
                           """void update_etc1a4(const Texture &t, uint8_t *previous, uint8_t *rgba) {
     const uint8_t *block = t.data;
