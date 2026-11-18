@@ -55,9 +55,17 @@ PackTexture load_pack_texture(const uint8_t *data, std::size_t size, uint32_t wi
     using Surface = std::unique_ptr<SDL_Surface, decltype(&SDL_DestroySurface)>;
     Surface png(SDL_LoadPNG(filename), SDL_DestroySurface);
     Surface image(png ? SDL_ConvertSurface(png.get(), SDL_PIXELFORMAT_RGBA32) : nullptr, SDL_DestroySurface);
-    if (!image || image->w < 1 || image->h < 1 || image->w > 4096 || image->h > 4096) {
+    if (!image || image->w < 1 || image->h < 1 || image->w > 8192 || image->h > 8192) {
         LOG("HD textures: could not load %s", filename);
         return {};
+    }
+    // Keep both axes in proportion when an atlas exceeds the renderer's size limit.
+    if (image->w > 4096 || image->h > 4096) {
+        image.reset(SDL_ScaleSurface(image.get(), image->w / 2, image->h / 2, SDL_SCALEMODE_LINEAR));
+        if (!image) {
+            LOG("HD textures: could not resize %s: %s", filename, SDL_GetError());
+            return {};
+        }
     }
     if (std::getenv("SM3DL_TRACE_HD_TEXTURES"))
         LOG("HD textures: %016llx %ux%u replaced with %dx%d", (unsigned long long)hash,

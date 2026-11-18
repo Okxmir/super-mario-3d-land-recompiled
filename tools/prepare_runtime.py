@@ -790,6 +790,30 @@ void submit_commands(SDL_GPUCommandBuffer *cmd) {
 
 def hd_texture_gpu(source):
     source = source.replace('#include "gpu.h"', '#include "gpu.h"\n#include "hd_texture_pack.h"')
+    source = source.replace('#include <algorithm>', '#include <algorithm>\n#include <bit>')
+    source = source.replace('SDL_GPUTextureUsageFlags usage) {',
+                            'SDL_GPUTextureUsageFlags usage, uint32_t levels = 1) {', 1)
+    source = source.replace('info.layer_count_or_depth = 1, info.num_levels = 1;',
+                            'info.layer_count_or_depth = 1, info.num_levels = levels;', 1)
+    source = source.replace('    uint32_t changes = 0; // times',
+                            '    uint32_t levels = 1;\n    uint32_t changes = 0; // times', 1)
+    source = source.replace('    uint32_t w, h;\n};\nstruct SurfaceLoad',
+                            '    uint32_t w, h;\n    bool mipmaps = false;\n};\nstruct SurfaceLoad', 1)
+    source = source.replace('SDL_GPUSampler *sampler(bool linear, uint32_t wrap_s, uint32_t wrap_t) {\n'
+                            '    int key = int(linear) | int(wrap_s & 7) << 1 | int(wrap_t & 7) << 4;',
+                            'SDL_GPUSampler *sampler(bool linear, uint32_t wrap_s, uint32_t wrap_t, bool mipmaps) {\n'
+                            '    int key = int(linear) | int(wrap_s & 7) << 1 | int(wrap_t & 7) << 4 | int(mipmaps) << 7;')
+    source = source.replace('    info.min_filter = info.mag_filter = linear ? SDL_GPU_FILTER_LINEAR : SDL_GPU_FILTER_NEAREST;\n'
+                            '    info.mipmap_mode = SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;',
+                            '    info.mag_filter = linear ? SDL_GPU_FILTER_LINEAR : SDL_GPU_FILTER_NEAREST;\n'
+                            '    info.min_filter = mipmaps ? SDL_GPU_FILTER_LINEAR : info.mag_filter;\n'
+                            '    info.mipmap_mode = mipmaps ? SDL_GPU_SAMPLERMIPMAPMODE_LINEAR : SDL_GPU_SAMPLERMIPMAPMODE_NEAREST;\n'
+                            '    info.max_lod = mipmaps ? 16.0f : 0.0f;')
+    source = source.replace('SDL_GPUTexture *texture_for(const Texture &t) {',
+                            'SDL_GPUTexture *texture_for(const Texture &t, bool &mipmaps) {\n    mipmaps = false;')
+    source = source.replace('if (it != textures.end() && it->second.hash == h) {\n',
+                            'if (it != textures.end() && it->second.hash == h) {\n'
+                            '        mipmaps = it->second.levels > 1;\n', 1)
     source = source.replace('bool hd_indexed = false;', '''bool hd_indexed = false;
 std::atomic<bool> hd_pack_requested{false};
 bool hd_pack_enabled = false;''')
@@ -797,10 +821,28 @@ bool hd_pack_enabled = false;''')
     if (hd_pack_enabled) pack = sm3dl::load_pack_texture(t.data, t.bytes, t.width, t.height, t.format);
     const HdImage *hd = pack.rgba.empty() ? hd_texture(h) : nullptr;
     uint32_t w = pack.width ? pack.width : hd ? hd->w : t.width;
-    uint32_t th = pack.height ? pack.height : hd ? hd->h : t.height;''')
+    uint32_t th = pack.height ? pack.height : hd ? hd->h : t.height;
+    // Never filter an HD atlas below the dimensions of the original PICA texture.
+    const uint32_t levels = pack.rgba.empty() ? 1 : std::max<uint32_t>(1, std::bit_width(std::min(w / t.width, th / t.height)));
+    mipmaps = levels > 1;''')
+    source = source.replace('(it->second.w != w || it->second.h != th)',
+                            '(it->second.w != w || it->second.h != th || it->second.levels != levels)', 1)
+    source = source.replace('SDL_GPU_TEXTUREUSAGE_SAMPLER),\n                                                 h, use_clock, w, th})',
+                            'SDL_GPU_TEXTUREUSAGE_SAMPLER | (mipmaps ? SDL_GPU_TEXTUREUSAGE_COLOR_TARGET : 0),\n'
+                            '                                                              levels), h, use_clock, w, th})', 1)
+    source = source.replace('    TextureUpload u{it->second.tex, {}, w, th};',
+                            '    it->second.levels = levels;\n    TextureUpload u{it->second.tex, {}, w, th, mipmaps};', 1)
     source = source.replace('    if (hd) {\n        u.rgba = hd->rgba;',
                             '    if (!pack.rgba.empty()) {\n        u.rgba = std::move(pack.rgba);\n'
                             '    } else if (hd) {\n        u.rgba = hd->rgba;')
+    source = source.replace('        d.tex[unit] = texture_for(t);\n        d.samp[unit] = sampler(t.mag_linear, t.wrap_s, t.wrap_t);',
+                            '        bool mipmaps;\n        d.tex[unit] = texture_for(t, mipmaps);\n'
+                            '        d.samp[unit] = sampler(t.mag_linear, t.wrap_s, t.wrap_t, mipmaps);')
+    source = source.replace('    SDL_EndGPUCopyPass(copy);\n\n    // surface loads',
+                            '    SDL_EndGPUCopyPass(copy);\n'
+                            '    for (const auto &upload : texture_uploads)\n'
+                            '        if (upload.mipmaps) SDL_GenerateMipmapsForGPUTexture(cmd, upload.tex);\n\n'
+                            '    // surface loads')
     source = source.replace('void begin_list() {\n    list_hashes.clear();', '''void set_hd_textures(bool enabled) {
     hd_pack_requested.store(enabled && sm3dl::has_hd_texture_pack(), std::memory_order_relaxed);
 }
