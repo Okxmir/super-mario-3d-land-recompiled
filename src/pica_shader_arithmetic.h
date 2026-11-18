@@ -4,7 +4,9 @@
 #include <atomic>
 #include <cmath>
 #include <immintrin.h>
+#ifdef _MSC_VER
 #include <intrin.h>
+#endif
 #include "pica_shader_decode.h"
 
 namespace pica {
@@ -81,9 +83,13 @@ inline bool compare(float a, float b, uint32_t op) {
 void run_arithmetic(const ShaderSetup &s, uint32_t pc, uint32_t ins, Vec4 const in[16], Vec4 out[16],
                     Vec4 tmp[16], int32_t addr[4], bool cond[2]) {
     static const bool ssse3 = [] {
+#ifdef _MSC_VER
         int cpu[4];
         __cpuid(cpu, 1);
         return (cpu[2] & (1 << 9)) != 0;
+#else
+        return __builtin_cpu_supports("ssse3") != 0;
+#endif
     }();
     static const Vec4 ones = {{1, 1, 1, 1}};
     thread_local ArithmeticInstruction cache[4096]{};

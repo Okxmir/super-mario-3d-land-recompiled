@@ -6,10 +6,15 @@ set(CMAKE_MSVC_DEBUG_INFORMATION_FORMAT "$<$<CONFIG:Debug,RelWithDebInfo>:Embedd
 set(CMAKE_TRY_COMPILE_CONFIGURATION Release)
 project(SuperMario3DLandRecompiled LANGUAGES C CXX)
 
-if(NOT WIN32 OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR
-   (MSVC AND NOT MSVC_CXX_ARCHITECTURE_ID STREQUAL "x64") OR
-   (NOT MSVC AND NOT (MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")))
-    message(FATAL_ERROR "Use the Windows x64 MSVC or LLVM-MinGW toolchain")
+if(WIN32)
+    if(NOT CMAKE_SIZEOF_VOID_P EQUAL 8 OR
+       (MSVC AND NOT MSVC_CXX_ARCHITECTURE_ID STREQUAL "x64") OR
+       (NOT MSVC AND NOT (MINGW AND CMAKE_CXX_COMPILER_ID STREQUAL "Clang")))
+        message(FATAL_ERROR "Use the Windows x64 MSVC or LLVM-MinGW toolchain")
+    endif()
+elseif(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux" OR
+       NOT CMAKE_SYSTEM_PROCESSOR STREQUAL "x86_64" OR NOT CMAKE_SIZEOF_VOID_P EQUAL 8)
+    message(FATAL_ERROR "Supported hosts are Windows x64 and Linux x86-64")
 endif()
 
 set(CMAKE_C_STANDARD 17)
@@ -21,9 +26,20 @@ set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 set(UPSTREAM "${CMAKE_CURRENT_SOURCE_DIR}/build/upstream")
 set(RUNTIME "${CMAKE_CURRENT_BINARY_DIR}/runtime")
 set(GENERATED "${CMAKE_CURRENT_SOURCE_DIR}/generated/sm3dl-eur")
-set(SDL3_DIR "${UPSTREAM}/SDL3-3.4.0/cmake")
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
-find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
+if(WIN32)
+    set(SDL3_DIR "${UPSTREAM}/SDL3-3.4.0/cmake")
+    find_package(SDL3 REQUIRED CONFIG COMPONENTS SDL3)
+    set(DXC "${UPSTREAM}/dxc-1.8.2505.1/bin/x64/dxc.exe")
+else()
+    find_package(Threads REQUIRED)
+    find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+    set(SDL_SHARED OFF)
+    set(SDL_STATIC ON)
+    set(SDL_TEST_LIBRARY OFF)
+    add_subdirectory("${UPSTREAM}/SDL3-3.4.0-linux" "${CMAKE_CURRENT_BINARY_DIR}/sdl" EXCLUDE_FROM_ALL)
+    set(DXC "${UPSTREAM}/dxc-linux-1.8.2505.1/bin/dxc")
+endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS tools/prepare_runtime.py)
 execute_process(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/prepare_runtime.py"
@@ -33,7 +49,7 @@ execute_process(
 
 file(GLOB TRANSLATED_CODE CONFIGURE_DEPENDS "${GENERATED}/*.c")
 if(NOT TRANSLATED_CODE)
-    message(FATAL_ERROR "Prepare the cartridge with scripts/prepare.ps1 before building")
+    message(FATAL_ERROR "Prepare the game with build.cmd on Windows or build.sh on Linux")
 endif()
 add_library(game_code OBJECT ${TRANSLATED_CODE})
 target_include_directories(game_code PRIVATE "${RUNTIME}/include" "${GENERATED}")
@@ -65,20 +81,23 @@ add_executable(SuperMario3DLand src/main.cpp src/shared_font.cpp src/save_storag
     src/cecd.cpp src/microphone.cpp src/local_mii.cpp ${RUNTIME_FILES})
 set_target_properties(SuperMario3DLand PROPERTIES OUTPUT_NAME SuperMario3DLandRecompiled)
 target_include_directories(SuperMario3DLand PRIVATE "${RUNTIME}/include" "${RUNTIME}/src" src "${UPSTREAM}/xbyak-df112862583c2d327c1d9782fd28f53aa675f11d")
-target_compile_definitions(SuperMario3DLand PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
-target_link_libraries(SuperMario3DLand PRIVATE game_code SDL3::SDL3 ws2_32 bcrypt)
-if(MSVC)
-    target_compile_options(SuperMario3DLand PRIVATE /W3 /utf-8)
+target_link_libraries(SuperMario3DLand PRIVATE game_code SDL3::SDL3)
+if(WIN32)
+    target_compile_definitions(SuperMario3DLand PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
+    target_link_libraries(SuperMario3DLand PRIVATE ws2_32 bcrypt)
+    if(MSVC)
+        target_compile_options(SuperMario3DLand PRIVATE /W3 /utf-8)
+    else()
+        target_compile_definitions(SuperMario3DLand PRIVATE WINVER=0x0A00 _WIN32_WINNT=0x0A00 NTDDI_VERSION=0x0A000002)
+        target_link_options(SuperMario3DLand PRIVATE -static -municode)
+        target_link_libraries(SuperMario3DLand PRIVATE comctl32 dwmapi)
+    endif()
+    add_custom_command(TARGET SuperMario3DLand POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:SuperMario3DLand>"
+    )
 else()
-    foreach(target SuperMario3DLand)
-        target_compile_definitions(${target} PRIVATE WINVER=0x0A00 _WIN32_WINNT=0x0A00 NTDDI_VERSION=0x0A000002)
-        target_link_options(${target} PRIVATE -static -municode)
-    endforeach()
-    target_link_libraries(SuperMario3DLand PRIVATE comctl32 dwmapi)
+    target_link_libraries(SuperMario3DLand PRIVATE OpenSSL::Crypto Threads::Threads)
 endif()
-add_custom_command(TARGET SuperMario3DLand POST_BUILD
-    COMMAND "${CMAKE_COMMAND}" -E copy_if_different "$<TARGET_FILE:SDL3::SDL3>" "$<TARGET_FILE_DIR:SuperMario3DLand>"
-)
 
 enable_testing()
 add_test(NAME cartridge_integrity
@@ -95,7 +114,6 @@ add_test(NAME native_display_colors COMMAND SuperMario3DLand --verify-display-co
 add_test(NAME gamepad_mapping COMMAND SuperMario3DLand --verify-gamepad)
 add_test(NAME display_aspect_ratios COMMAND SuperMario3DLand --verify-aspect-ratio)
 
-set(DXC "${UPSTREAM}/dxc-1.8.2505.1/bin/x64/dxc.exe")
 set(LCD_HEADER "${CMAKE_CURRENT_BINARY_DIR}/sm3dl_lcd.inc")
 add_custom_command(OUTPUT "${LCD_HEADER}"
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_lcd.py"

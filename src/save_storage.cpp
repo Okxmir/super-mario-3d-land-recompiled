@@ -2,9 +2,17 @@
 
 #include "log.h"
 
+#ifdef _WIN32
 #include <windows.h>
+#else
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+#endif
 
 #include <chrono>
+#include <cerrno>
+#include <cstring>
 #include <fstream>
 #include <string>
 
@@ -16,7 +24,12 @@ constexpr auto format_name = ".sm3dl-archive-format";
 fs::path make_snapshot_directory(const fs::path &parent, const char *prefix) {
     fs::create_directories(parent);
     auto now = std::chrono::system_clock::now().time_since_epoch().count();
-    auto stem = std::string(prefix) + std::to_string(now) + "-" + std::to_string(GetCurrentProcessId());
+#ifdef _WIN32
+    const auto pid = GetCurrentProcessId();
+#else
+    const auto pid = getpid();
+#endif
+    auto stem = std::string(prefix) + std::to_string(now) + "-" + std::to_string(pid);
     for (unsigned suffix = 0; suffix != 100; ++suffix) {
         auto path = parent / (stem + "-" + std::to_string(suffix));
         if (fs::create_directory(path)) return path;
@@ -37,10 +50,21 @@ void write_format(const fs::path &dir, const SaveFormat &format) {
 void lock_save_directory(const fs::path &root) {
     fs::create_directories(root);
     auto lock = root / "sm3dl-save.lock";
+#ifdef _WIN32
     // Keep the handle for the lifetime of the game.
     HANDLE handle = CreateFileW(lock.c_str(), GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_ALWAYS,
                                 FILE_ATTRIBUTE_NORMAL, nullptr);
     if (handle == INVALID_HANDLE_VALUE) fatal("Cannot lock Mario user data (Windows error %lu)", GetLastError());
+#else
+    const int fd = open(lock.c_str(), O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+    if (fd < 0) fatal("Cannot open Mario user data lock: %s", std::strerror(errno));
+    if (flock(fd, LOCK_EX | LOCK_NB) != 0) {
+        const int error = errno;
+        close(fd);
+        fatal("Cannot lock Mario user data: %s", std::strerror(error));
+    }
+    // Keep the descriptor open for the lifetime of the game.
+#endif
 }
 
 std::optional<SaveFormat> read_save_format(const fs::path &save) {

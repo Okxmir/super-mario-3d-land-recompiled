@@ -35,7 +35,8 @@ def frontend(source):
         '                if (e.key.scancode == SDL_SCANCODE_F9) s.single_screen = !s.single_screen, relayout();\n', '')
     source = source.replace('#include "handoff.h"\n', '').replace('#include "launcher.h"\n', '')
     source = source.replace('#include "settings.h"\n',
-                            '#include "settings.h"\n#include "resolution_menu.h"\n#include "virtual_gamepad.h"\n')
+                            '#include "settings.h"\n#ifdef _WIN32\n#include "resolution_menu.h"\n#endif\n'
+                            '#include "virtual_gamepad.h"\n')
     source = source.replace("Input input() {", """int verify_aspect_ratio() {
     auto &s = settings();
     const Settings previous = s;
@@ -146,18 +147,24 @@ Input input() {""")
     source = source.replace(
         "    SDL_SetWindowFullscreen(window, s.fullscreen); // the game's own choice, whatever the launcher was",
         "    if (s.fullscreen) SDL_SetWindowFullscreen(window, true);\n"
+        "#ifdef _WIN32\n"
         "    ResolutionMenu resolution_menu(window, s);\n"
         "    resolution_menu.set_visible(!(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN));\n"
+        "#endif\n"
         "    SDL_RaiseWindow(window);")
     source = source.replace(
         """                    s.fullscreen = !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN);
                     SDL_SetWindowFullscreen(window, s.fullscreen);
                     s.save();""",
         """                    const bool fullscreen = !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN);
+#ifdef _WIN32
                     if (fullscreen) resolution_menu.set_visible(false);
+#endif
                     SDL_SetWindowFullscreen(window, fullscreen);
                     s.fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+#ifdef _WIN32
                     resolution_menu.set_visible(!s.fullscreen);
+#endif
                     s.save();""")
     source = source.replace("    pica::set_resolution_scale(s.resolution);",
                             "    pica::set_resolution_scale(s.resolution);\n"
@@ -197,9 +204,11 @@ Input input() {""")
         "            SDL_SetBooleanProperty(props, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, false);")
     source = source.replace(
         "    if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO)) {",
-        """    // SDL's HIDAPI scan can block on the standard USB DualSense.
+        """#ifdef _WIN32
+    // SDL's HIDAPI scan can block on the standard USB DualSense.
     // Leave that device to Windows and keep HIDAPI available for other controllers.
     SDL_SetHintWithPriority(SDL_HINT_HIDAPI_IGNORE_DEVICES, "0x054c/0x0ce6", SDL_HINT_DEFAULT);
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO)) {""",
     )
     source = source.replace(
@@ -256,15 +265,17 @@ void SDLCALL capture_sdl_log(void *, int category, SDL_LogPriority priority, con
         // startup failure can switch renderers before any game state is created.
         if (device && (!SDL_RenderClear(renderer) || !SDL_RenderPresent(renderer) ||
                        vulkan_device_lost.load(std::memory_order_relaxed))) {
-            LOG("Vulkan startup presentation failed: %s; retrying with Direct3D 11",
+            LOG("Vulkan startup presentation failed: %s; trying the fallback renderer",
                 vulkan_device_lost.load(std::memory_order_relaxed) ? "VK_ERROR_DEVICE_LOST" : SDL_GetError());
             SDL_DestroyRenderer(renderer);
             SDL_DestroyGPUDevice(device);
             renderer = nullptr;
             device = nullptr;
         }
-        if (!renderer && !(renderer = SDL_CreateRenderer(window, "direct3d11")) &&
-            !(renderer = SDL_CreateRenderer(window, "software")))
+#ifdef _WIN32
+        if (!renderer) renderer = SDL_CreateRenderer(window, "direct3d11");
+#endif
+        if (!renderer && !(renderer = SDL_CreateRenderer(window, "software")))
             fatal("cannot create a fallback renderer: %s", SDL_GetError());""",
     )
     source = source.replace(
@@ -316,8 +327,23 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
     source = source.replace(
         "        while (SDL_PollEvent(&e)) {\n",
         """        while (SDL_PollEvent(&e)) {
-            if (e.type == ResolutionMenu::layout_toggle_event() ||
-                (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F9)) {
+#ifdef _WIN32
+            if (e.type == ResolutionMenu::layout_toggle_event()) {
+                s.toggle_screen_layout();
+                relayout();
+                continue;
+            }
+#else
+            if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F4 &&
+                pica::gpu::active()) {
+                s.resolution = s.resolution == 1 ? 2 : s.resolution == 2 ? 4 : 1;
+                pica::set_resolution_scale(s.resolution);
+                s.save();
+                show_message(std::to_string(s.resolution) + "x");
+                continue;
+            }
+#endif
+            if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F9) {
                 s.toggle_screen_layout();
                 relayout();
                 continue;
@@ -384,7 +410,7 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
         if (device && (vulkan_device_lost.load(std::memory_order_relaxed) ||
                        (!presented && std::strstr(SDL_GetError(), "VK_ERROR_DEVICE_LOST"))))
             fatal("Vulkan device lost during presentation (VK_ERROR_DEVICE_LOST). "
-                  "Set gpu_renderer=0 in userdata/settings.ini to retry with Direct3D 11.");""",
+                  "Set gpu_renderer=0 in userdata/settings.ini to use the fallback renderer.");""",
     )
     return source
 
@@ -553,7 +579,7 @@ SDL_GPUTexture *lcd_frame(uint32_t addr, int *width, int *height) {""")
     source = source.replace(
         download_comment,
         """[[noreturn]] void gpu_failure(const char *operation) {
-    fatal("Vulkan %s failed: %s. Set gpu_renderer=0 in userdata/settings.ini to retry with Direct3D 11.",
+    fatal("Vulkan %s failed: %s. Set gpu_renderer=0 in userdata/settings.ini to use the fallback renderer.",
           operation, SDL_GetError());
 }
 
@@ -1026,13 +1052,25 @@ def shader(source):
 
 
 def vertex_workers(source):
-    source = source.replace("#include <thread>", "#include <thread>\n#include <bit>\n#include <windows.h>")
+    source = source.replace("#include <thread>", """#include <thread>
+#ifdef _WIN32
+#include <bit>
+#include <windows.h>
+#else
+#include <sched.h>
+#endif""")
     source = source.replace(
         "        unsigned hw = std::thread::hardware_concurrency();",
         """        unsigned hw = std::thread::hardware_concurrency();
+#ifdef _WIN32
         DWORD_PTR allowed = 0, system = 0;
         if (GetProcessAffinityMask(GetCurrentProcess(), &allowed, &system) && allowed)
-            hw = std::popcount(allowed);""",
+            hw = std::popcount(allowed);
+#else
+        cpu_set_t allowed;
+        if (sched_getaffinity(0, sizeof allowed, &allowed) == 0)
+            hw = CPU_COUNT(&allowed);
+#endif""",
     )
     source = source.replace("#include <condition_variable>", "#include <atomic>")
     source = source.replace(between(source, "        if (lanes == 1 || count < 64)", "    void slice("),

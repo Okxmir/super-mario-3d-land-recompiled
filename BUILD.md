@@ -1,4 +1,6 @@
-# Build Super Mario 3D Land recompiled on Windows
+# Build Super Mario 3D Land recompiled
+
+## Windows x64
 
 Use Windows 10 or 11 x64 and an internet connection for the first build. The portable build downloads its own compiler, Python, and other pinned dependencies. It takes several minutes, depending on your connection and PC.
 
@@ -31,3 +33,31 @@ The Vulkan renderer targets a 60 Hz refresh for the top screen and keeps the ori
 Connect a Windows-compatible gamepad and use the left stick to move. Controller mappings follow the positions of the 3DS buttons. On an Xbox controller, **A** jumps, **X** runs, and **Menu** pauses.
 
 On first launch, decline StreetPass to play offline. The profile setup supplies a local Player Mii.
+
+## Linux x86-64
+
+Use a C++20 compiler, CMake 3.24 or newer, Ninja, Python 3.11 or newer with Pillow and PyPNG, and Rust 1.90 or newer with Cargo. The first build downloads pinned dependencies. Install the packages below on Ubuntu 24.04 or use your distribution's equivalents.
+
+```bash
+sudo apt update
+sudo apt install build-essential cmake ninja-build pkg-config ca-certificates \
+  python3 python3-pil python3-png python3-tk libssl-dev libx11-dev libxext-dev \
+  libxrandr-dev libxi-dev libxcursor-dev libxfixes-dev libxss-dev libxtst-dev \
+  libxkbcommon-dev libwayland-dev libegl-dev libdecor-0-dev libasound2-dev \
+  libpulse-dev libvulkan-dev
+```
+
+Use [rustup](https://rustup.rs/) if your distribution's Rust version is older than 1.90. Install the Vulkan driver for your GPU for hardware rendering.
+
+Open a terminal in the project folder and run the build using a decrypted European ROM (`CTR-P-AREP`) in `.3ds`, `.cci`, or `.cxi` format.
+
+```bash
+bash build.sh --cartridge "YourRom.3ds" --language en
+./dist/linux-x64/SuperMario3DLandRecompiled
+```
+
+Use `--language en`, `fr`, `de`, `es`, `it`, `nl`, `pt`, or `ru`. Omit the option to keep a saved language preference. The build runs the same six tests as the Windows build. It writes the executable and required local files to `dist/linux-x64`. Keep the files together. Saves and display preferences are stored in `userdata` beside the executable.
+
+For the graphical builder, run `bash SuperMario3DLandBuilder` from the project or extracted builder folder. Choose the ROM and language, then click **Build**. The builder shows progress and estimates the remaining time once enough compilation steps have finished. When the build completes, run the builder again to launch the game. Use `bash SuperMario3DLandBuilder --build-menu` to return to the ROM and language selector. The game directory is created beside the ROM. The builder writes a log to `build/linux-builder.log`.
+
+Each build uses up to four parallel compile jobs by default. Set `CMAKE_BUILD_PARALLEL_LEVEL=2` if you need to reduce compiler memory use. **F4** cycles through the upscaling options with Vulkan, **F7** switches aspect ratios, and **F9** switches the upper-screen layout.

@@ -10,8 +10,12 @@
 #include "video/internal.h"
 
 #include <SDL3/SDL.h>
+#ifdef _WIN32
 #include <windows.h>
 #include <bcrypt.h>
+#else
+#include <openssl/sha.h>
+#endif
 
 #include <algorithm>
 #include <array>
@@ -21,7 +25,6 @@
 #include <cstring>
 #include <filesystem>
 #include <string>
-#include <string_view>
 
 namespace game_code {
 const RecompEntry *functions() { return recomp_functions; }
@@ -79,10 +82,10 @@ std::filesystem::path pick_cartridge() {
         if (selection.path.empty()) break;
 
         image = std::filesystem::u8path(selection.path);
-        const auto extension = image.extension().wstring();
-        if ((_wcsicmp(extension.c_str(), L".3ds") == 0 ||
-             _wcsicmp(extension.c_str(), L".cci") == 0 ||
-             _wcsicmp(extension.c_str(), L".cxi") == 0) &&
+        const auto extension = utf8_path(image.extension());
+        if ((SDL_strcasecmp(extension.c_str(), ".3ds") == 0 ||
+             SDL_strcasecmp(extension.c_str(), ".cci") == 0 ||
+             SDL_strcasecmp(extension.c_str(), ".cxi") == 0) &&
             peek_program_id(image) == europe_title)
             break;
         image.clear();
@@ -93,6 +96,7 @@ std::filesystem::path pick_cartridge() {
     return image;
 }
 
+#ifdef _WIN32
 LONG WINAPI report_access_violation(EXCEPTION_POINTERS *info) {
     const auto &record = *info->ExceptionRecord;
     if (record.ExceptionCode != EXCEPTION_ACCESS_VIOLATION || record.NumberParameters < 2)
@@ -117,6 +121,7 @@ LONG WINAPI report_access_violation(EXCEPTION_POINTERS *info) {
     std::fflush(stderr);
     return EXCEPTION_CONTINUE_SEARCH;
 }
+#endif
 
 constexpr std::array<uint8_t, 32> expected_code = {
     0xe1, 0xd7, 0xe1, 0x88, 0xff, 0x88, 0x46, 0x7d, 0xf7, 0x76, 0xc1, 0x7c, 0xec, 0x45, 0xc4, 0x48,
@@ -131,9 +136,14 @@ GameImage load(const char *path) {
     const auto &code = dump().code();
     if (code.size() != 0x2f4000) fatal("%s", cartridge_required);
     std::array<uint8_t, 32> hash{};
+#ifdef _WIN32
     const auto status = BCryptHash(BCRYPT_SHA256_ALG_HANDLE, nullptr, 0, const_cast<PUCHAR>(code.data()),
                                    static_cast<ULONG>(code.size()), hash.data(), static_cast<ULONG>(hash.size()));
-    if (status < 0 || hash != expected_code) fatal("%s", cartridge_required);
+    const bool hashed = status >= 0;
+#else
+    const bool hashed = SHA256(code.data(), code.size(), hash.data()) != nullptr;
+#endif
+    if (!hashed || hash != expected_code) fatal("%s", cartridge_required);
     mem::init();
     return load_game();
 }
@@ -229,15 +239,18 @@ void play(const char *path) {
 }
 }
 
-int wmain(int argc, wchar_t **argv) {
+template<typename Char>
+int run_game(int argc, Char **argv) {
+#ifdef _WIN32
     SetUnhandledExceptionFilter(report_access_violation);
-    const std::wstring_view option = argc > 1 ? argv[1] : L"";
-    if (argc == 2 && option == L"--verify-gamepad") return frontend::verify_gamepad();
-    if (argc == 2 && option == L"--verify-aspect-ratio") return frontend::verify_aspect_ratio();
-    if (argc == 2 && option == L"--verify-textures") return verify_texture_updates();
-    if (argc == 2 && option == L"--verify-display-colors") return verify_display_colors();
-    const bool verify = argc == 3 && option == L"--verify-startup";
-    if ((argc > 2 && !verify) || (argc == 2 && option == L"--help")) {
+#endif
+    const auto option = argc > 1 ? utf8_path(argv[1]) : std::string{};
+    if (argc == 2 && option == "--verify-gamepad") return frontend::verify_gamepad();
+    if (argc == 2 && option == "--verify-aspect-ratio") return frontend::verify_aspect_ratio();
+    if (argc == 2 && option == "--verify-textures") return verify_texture_updates();
+    if (argc == 2 && option == "--verify-display-colors") return verify_display_colors();
+    const bool verify = argc == 3 && option == "--verify-startup";
+    if ((argc > 2 && !verify) || (argc == 2 && option == "--help")) {
         std::puts("SuperMario3DLandRecompiled [path to a decrypted European ROM (.3ds, .cci, .cxi)]");
         return argc > 2 ? 2 : 0;
     }
@@ -265,4 +278,11 @@ int wmain(int argc, wchar_t **argv) {
     const auto path = utf8_path(image);
     if (!std::filesystem::is_regular_file(image)) fatal("ROM file not found: %s", path.c_str());
     frontend::run(play, path.c_str());
+    return 0;
 }
+
+#ifdef _WIN32
+int wmain(int argc, wchar_t **argv) { return run_game(argc, argv); }
+#else
+int main(int argc, char **argv) { return run_game(argc, argv); }
+#endif
