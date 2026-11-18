@@ -21,7 +21,6 @@ LOCATION_FILE = HERE / "build/linux-game-location.txt"
 LOG_FILE = HERE / "build/linux-builder.log"
 LANGUAGES = {"English": "en", "French": "fr", "German": "de", "Italian": "it",
              "Spanish": "es", "Dutch": "nl", "Portuguese": "pt", "Russian": "ru"}
-ROM_TYPES = {".3ds", ".cci", ".cxi"}
 STAGES = {
     "Preparing dependencies": 2,
     "Extracting the ROM": 10,
@@ -35,26 +34,9 @@ NINJA_STEP = re.compile(r"^\[(\d+)/(\d+)\] (?:Building|Linking|Generating)\b")
 
 
 def validate_rom(rom):
-    from cartridge import printable_ascii, read_cartridge, read_partition
+    from cartridge import validate_decrypted_rom
 
-    rom = rom.resolve(strict=True)
-    if not rom.is_file() or rom.suffix.lower() not in ROM_TYPES:
-        raise ValueError("Choose a .3ds, .cci, or .cxi file.")
-    try:
-        with rom.open("rb") as stream:
-            _, partitions = read_cartridge(stream, os.fstat(stream.fileno()).st_size)
-            header, _, regions = read_partition(stream, *partitions[0])
-    except ValueError as error:
-        raise ValueError("The file is not a readable Nintendo 3DS ROM.") from error
-    product = printable_ascii(header[0x150:0x160])
-    program = int.from_bytes(header[0x118:0x120], "little")
-    if product != "CTR-P-AREP" or program != 0x0004000000053F00:
-        raise ValueError("Choose the European Super Mario 3D Land ROM (CTR-P-AREP).")
-    if not header[0x18F] & 4:
-        raise ValueError("This ROM is encrypted. Choose a decrypted European copy.")
-    if {"ExHeader", "ExeFS", "RomFS"} - regions.keys():
-        raise ValueError("The ROM is missing required game data.")
-    return rom
+    return validate_decrypted_rom(rom)
 
 
 def replace_text_file(path, content):

@@ -11,6 +11,10 @@ import tempfile
 from pathlib import Path
 
 
+ROM_TYPES = {".3ds", ".cci", ".cxi"}
+REQUIRED_REGIONS = ("ExHeader", "ExeFS", "RomFS")
+
+
 def u32(data, offset):
     return struct.unpack_from("<I", data, offset)[0]
 
@@ -90,6 +94,51 @@ def printable_ascii(data):
     return data.split(b"\0", 1)[0].decode("ascii", errors="replace")
 
 
+def integrity_error(region, encrypted):
+    if encrypted:
+        return f"{region} SHA-256 mismatch after decryption. Check the key and your ROM dump."
+    return (f"{region} SHA-256 mismatch. The ROM may be incompletely decrypted or damaged. "
+            "Select a fresh decrypted European Super Mario 3D Land ROM (CTR-P-AREP).")
+
+
+def validate_decrypted_rom(path):
+    """Check the region, decryption flag and NCCH hashes before starting a build."""
+    path = path.resolve(strict=True)
+    if not path.is_file() or path.suffix.lower() not in ROM_TYPES:
+        raise ValueError("Choose a .3ds, .cci, or .cxi file.")
+    with path.open("rb") as stream:
+        try:
+            _, partitions = read_cartridge(stream, os.fstat(stream.fileno()).st_size)
+            base, size, index = partitions[0]
+            header, _, regions = read_partition(stream, base, size, index)
+        except ValueError as error:
+            raise ValueError("The file is not a readable Nintendo 3DS ROM.") from error
+
+        if (printable_ascii(header[0x150:0x160]) != "CTR-P-AREP" or
+                int.from_bytes(header[0x118:0x120], "little") != 0x0004000000053F00):
+            raise ValueError("Choose the European Super Mario 3D Land ROM (CTR-P-AREP).")
+        if not header[0x18F] & 4:
+            raise ValueError("This ROM is encrypted. Choose a decrypted European copy.")
+        if any(name not in regions for name in REQUIRED_REGIONS):
+            raise ValueError("The ROM is missing required game data.")
+
+        for name in REQUIRED_REGIONS:
+            offset, _, length, digest_at, _ = regions[name]
+            if not length:
+                raise ValueError(f"The ROM is missing the {name} integrity data.")
+            digest = hashlib.sha256()
+            stream.seek(base + offset)
+            while length:
+                block = stream.read(min(length, 1024 * 1024))
+                if not block:
+                    raise ValueError(f"The ROM ends inside its {name} region.")
+                digest.update(block)
+                length -= len(block)
+            if digest.digest() != header[digest_at:digest_at + 32]:
+                raise ValueError(integrity_error(name, encrypted=False))
+    return path
+
+
 def inspect_rom(stream, size, hash_rom):
     fmt, partitions = read_cartridge(stream, size)
     report = {"container": fmt, "size": size, "partitions": []}
@@ -142,7 +191,7 @@ def extract_primary(stream, size, output, key_file):
     _, partitions = read_cartridge(stream, size)
     offset, length, _ = partitions[0]
     header, length, regions = read_partition(stream, offset, length, 0)
-    if any(name not in regions for name in ("ExHeader", "ExeFS", "RomFS")):
+    if any(name not in regions for name in REQUIRED_REGIONS):
         raise ValueError("The primary partition is missing executable data")
     encrypted = not bool(header[0x18F] & 4)
     key_x = None
@@ -174,7 +223,7 @@ def extract_primary(stream, size, output, key_file):
                 decryptor = make_decryptor(header, key_x, kind) if encrypted and kind else None
                 digest = copy_region(stream, out, offset + start, count, decryptor, hash_size)
                 if hash_size and digest != header[hash_offset:hash_offset + 32]:
-                    raise ValueError(f"{name} SHA-256 mismatch (wrong key or damaged input)")
+                    raise ValueError(integrity_error(name, encrypted))
                 print(f"{name}: {count} bytes" + (", SHA-256 verified" if hash_size else ""))
                 cursor = start + count
             copy_region(stream, out, offset + cursor, length - cursor)
