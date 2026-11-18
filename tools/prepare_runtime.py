@@ -16,7 +16,8 @@ def edit(path, transform):
 
 def frontend(source):
     source = source.replace('#include <cstdio>', '#include <cstdio>\n#include <cmath>')
-    source = source.replace('#include "settings.h"\n', '#include "settings.h"\n#include "course_hud.h"\n')
+    source = source.replace('#include "settings.h"\n',
+                            '#include "settings.h"\n#include "course_hud.h"\n#include "hd_texture_pack.h"\n')
     source = source.replace('int big = s.swap_screens ? 1 : 0, small = 1 - big;',
                             'int big = s.swap_screens && !s.widescreen_layout() ? 1 : 0, small = 1 - big;')
     source = source.replace('s.swap_screens = !s.swap_screens, relayout();',
@@ -214,6 +215,7 @@ Input input() {""")
                     s.save();""")
     source = source.replace("    pica::set_resolution_scale(s.resolution);",
                             "    pica::set_resolution_scale(s.resolution);\n"
+                            "    if (pica::gpu::active()) pica::gpu::set_hd_textures(s.hd_textures);\n"
                             '    LOG("graphics: resolution %dx", std::clamp(s.resolution, 1, 4));')
     source = source.replace("    pica::set_widescreen(s.widescreen);",
                             "    pica::set_aspect_ratio(pica::gpu::active() ? s.aspect_ratio : 0);")
@@ -383,6 +385,14 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
                 continue;
             }
 #else
+            if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F10 &&
+                e.key.mod & SDL_KMOD_CTRL && pica::gpu::active() && sm3dl::has_hd_texture_pack()) {
+                s.hd_textures = !s.hd_textures;
+                pica::gpu::set_hd_textures(s.hd_textures);
+                s.save();
+                show_message(s.hd_textures ? "HD on" : "HD off");
+                continue;
+            }
             if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F4 &&
                 pica::gpu::active()) {
                 s.resolution = s.resolution == 1 ? 2 : s.resolution == 2 ? 4 : 1;
@@ -775,7 +785,37 @@ void submit_commands(SDL_GPUCommandBuffer *cmd) {
         "    if (interp_this) for (auto &l : surface_loads) reloaded.push_back(l.surface);",
     )
     source = reuse_upload_buffer(source)
-    return course_hud_gpu(lcd_smoothing(land_lcd(source)))
+    return hd_texture_gpu(course_hud_gpu(lcd_smoothing(land_lcd(source))))
+
+
+def hd_texture_gpu(source):
+    source = source.replace('#include "gpu.h"', '#include "gpu.h"\n#include "hd_texture_pack.h"')
+    source = source.replace('bool hd_indexed = false;', '''bool hd_indexed = false;
+std::atomic<bool> hd_pack_requested{false};
+bool hd_pack_enabled = false;''')
+    source = source.replace('    const HdImage *hd = hd_texture(h);\n    uint32_t w = hd ? hd->w : t.width, th = hd ? hd->h : t.height;', '''    sm3dl::PackTexture pack;
+    if (hd_pack_enabled) pack = sm3dl::load_pack_texture(t.data, t.bytes, t.width, t.height, t.format);
+    const HdImage *hd = pack.rgba.empty() ? hd_texture(h) : nullptr;
+    uint32_t w = pack.width ? pack.width : hd ? hd->w : t.width;
+    uint32_t th = pack.height ? pack.height : hd ? hd->h : t.height;''')
+    source = source.replace('    if (hd) {\n        u.rgba = hd->rgba;',
+                            '    if (!pack.rgba.empty()) {\n        u.rgba = std::move(pack.rgba);\n'
+                            '    } else if (hd) {\n        u.rgba = hd->rgba;')
+    source = source.replace('void begin_list() {\n    list_hashes.clear();', '''void set_hd_textures(bool enabled) {
+    hd_pack_requested.store(enabled && sm3dl::has_hd_texture_pack(), std::memory_order_relaxed);
+}
+
+void begin_list() {
+    list_hashes.clear();
+    const bool hd = hd_pack_requested.load(std::memory_order_relaxed);
+    if (hd != hd_pack_enabled) {
+        // SDL defers releasing in-flight GPU resources. Rebuild textures at a guest list boundary.
+        for (const auto &[key, entry] : textures) SDL_ReleaseGPUTexture(dev, entry.tex);
+        textures.clear();
+        hd_pack_enabled = hd;
+        LOG("HD textures: %s", hd ? "on" : "off");
+    }''')
+    return source
 
 
 def lcd_smoothing(source):
@@ -1426,7 +1466,7 @@ def prepare(upstream, output):
         '    {0x0004000000053F00, "sm3dl", "", "SuperMario3DLand", Region::EUR},'))
     edit(src / "platform.cpp", platform)
     edit(src / "frontend/settings.h", lambda source: source.replace(
-        "    int volume = 100;", "    int volume = 25;").replace("int hud_size = 80;", "int hud_size = 100;").replace(
+        "    int volume = 100;", "    int volume = 25;\n    bool hd_textures = false;").replace("int hud_size = 80;", "int hud_size = 100;").replace(
         "    int resolution = 1;", "    int aspect_ratio = 0; // 0 original, 1 16:9, 2 21:9\n    int resolution = 1;").replace(
         "    void reset_controls();", '''    void reset_controls();
     void toggle_screen_layout() {
@@ -1453,6 +1493,7 @@ def prepare(upstream, output):
         '      << "frame_interpolation=" << frame_interpolation << "\\n"\n', '').replace(
         '    std::ifstream f(file());', '    bool has_aspect_ratio = false;\n    std::ifstream f(file());').replace(
         '        else if (k == "widescreen") widescreen = b;',
+        '        else if (k == "hd_textures") hd_textures = b;\n'
         '        else if (k == "widescreen") widescreen = b;\n'
         '        else if (k == "aspect_ratio") {\n'
         '            aspect_ratio = std::clamp(std::atoi(v.c_str()), 0, 2);\n'
@@ -1462,6 +1503,7 @@ def prepare(upstream, output):
         '\n    if (!has_aspect_ratio) aspect_ratio = widescreen ? 1 : 0;\n'
         '    widescreen = aspect_ratio != 0;\n}\n\nvoid Settings::save() const').replace(
         '      << "widescreen=" << widescreen << "\\n"',
+        '      << "hd_textures=" << hd_textures << "\\n"\n'
         '      << "aspect_ratio=" << aspect_ratio << "\\n"\n'
         '      << "widescreen=" << widescreen << "\\n"'))
     edit(src / "video/pica.h", lambda source: source.replace(

@@ -78,7 +78,7 @@ set(RUNTIME_FILES
 list(TRANSFORM RUNTIME_FILES PREPEND "${RUNTIME}/src/")
 
 add_executable(SuperMario3DLand src/main.cpp src/shared_font.cpp src/save_storage.cpp src/pica_shader_jit.cpp
-    src/cecd.cpp src/microphone.cpp src/local_mii.cpp ${RUNTIME_FILES})
+    src/cecd.cpp src/microphone.cpp src/local_mii.cpp src/hd_texture_pack.cpp src/cityhash64.cpp ${RUNTIME_FILES})
 set_target_properties(SuperMario3DLand PROPERTIES OUTPUT_NAME SuperMario3DLandRecompiled)
 target_include_directories(SuperMario3DLand PRIVATE "${RUNTIME}/include" "${RUNTIME}/src" src "${UPSTREAM}/xbyak-df112862583c2d327c1d9782fd28f53aa675f11d")
 target_link_libraries(SuperMario3DLand PRIVATE game_code SDL3::SDL3)

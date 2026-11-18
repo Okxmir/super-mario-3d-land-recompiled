@@ -164,6 +164,7 @@ def package(build, language, dist):
             for source in game_files:
                 shutil.copy2(source, staging)
             shutil.copyfile(ROOT / "LICENSE", licenses / "Clockwork.txt")
+            shutil.copyfile(ROOT / "licenses/CityHash.txt", licenses / "CityHash.txt")
             shutil.copyfile(UPSTREAM / "SDL3-3.4.0-linux/LICENSE.txt", licenses / "SDL.txt")
             shutil.copyfile(UPSTREAM / f"xbyak-{XBYAK}/COPYRIGHT", licenses / "Xbyak.txt")
             shutil.copyfile(UPSTREAM / f"citra_system_archives-{FONT}/license.txt", licenses / "SystemArchives.txt")

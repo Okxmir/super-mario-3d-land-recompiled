@@ -13,6 +13,8 @@ import threading
 import time
 from pathlib import Path
 
+from hd_pack import configure_hd
+
 
 HERE = Path(__file__).resolve().parents[1]
 EXE = "SuperMario3DLandRecompiled"
@@ -29,6 +31,7 @@ STAGES = {
     "Compiling the game": 28,
     "Running tests": 95,
     "Writing game files": 98,
+    "Installing HD textures": 99,
 }
 NINJA_STEP = re.compile(r"^\[(\d+)/(\d+)\] (?:Building|Linking|Generating)\b")
 
@@ -61,7 +64,7 @@ def find_game():
     return None
 
 
-def build(rom, language, report):
+def build(rom, language, report, hd_textures=False):
     rom = validate_rom(rom)
     output = rom.parent / OUTPUT_NAME
     command = ["bash", HERE / "build.sh", "--cartridge", rom, "--language", language,
@@ -82,6 +85,11 @@ def build(rom, language, report):
             if child.wait() != 0:
                 detail = next((line for line in reversed(output_tail) if line.startswith("error: ")), "")
                 raise ValueError(f"{detail or 'Build failed.'} See build/linux-builder.log.")
+        def report_hd(line):
+            log.write(line + "\n")
+            report(line)
+
+        configure_hd(output, hd_textures, report_hd)
         replace_text_file(LOCATION_FILE, str(output) + "\n")
     return output
 
@@ -93,8 +101,11 @@ class Progress:
         self.stage = "Preparing dependencies"
         self.compile_start = None
         self.predicted = None
+        self.hd_warning = False
 
     def update(self, line, now):
+        if line.startswith("HD textures unavailable."):
+            self.hd_warning = True
         marker = "Build stage: "
         if line.startswith(marker) and (stage := line[len(marker):]) in STAGES:
             self.stage = stage
@@ -120,7 +131,7 @@ class Progress:
         if self.predicted is not None:
             minutes = max(1, round((self.predicted - now) / 60))
             eta = f"About {minutes} min remaining"
-        if self.stage in ("Running tests", "Writing game files"):
+        if self.stage in ("Running tests", "Writing game files", "Installing HD textures"):
             eta = "Finishing..."
         return f"{self.stage}\n{elapsed} elapsed  |  {eta}"
 
@@ -152,11 +163,14 @@ def gui(startup_error=None):
     label("Game language", 4)
     languages = ttk.Combobox(panel, textvariable=language, values=list(LANGUAGES), state="readonly", width=20)
     languages.grid(row=5, column=0, sticky="w")
+    hd_textures = tk.BooleanVar(value=True)
+    hd_option = ttk.Checkbutton(panel, text="Install HD textures (1080p, 107 MB)", variable=hd_textures)
+    hd_option.grid(row=6, column=0, sticky="w", pady=(10, 0))
     progress = ttk.Progressbar(panel, maximum=100)
-    progress.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(18, 8))
+    progress.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(18, 8))
     message = tk.StringVar(value=startup_error or "The game folder will be created beside the ROM.")
     tk.Label(panel, textvariable=message, bg="#16231e", fg="#eef8ee", justify="left", anchor="w",
-             wraplength=355, width=49, height=3).grid(row=7, column=0, sticky="w")
+             wraplength=355, width=49, height=4).grid(row=8, column=0, sticky="w")
 
     updates = queue.Queue()
     active = None
@@ -181,13 +195,16 @@ def gui(startup_error=None):
         nonlocal active
         active = Progress()
         filename, selected = Path(rom.get()), LANGUAGES[language.get()]
+        install_hd = hd_textures.get()
         browse.configure(state="disabled")
         languages.configure(state="disabled")
+        hd_option.configure(state="disabled")
         button.configure(text="Build 0%", state="disabled")
 
         def run():
             try:
-                output = build(filename, selected, lambda line: updates.put(("line", line, time.monotonic())))
+                output = build(filename, selected, lambda line: updates.put(("line", line, time.monotonic())),
+                               hd_textures=install_hd)
             except (OSError, ValueError) as error:
                 updates.put(("error", str(error), time.monotonic()))
             else:
@@ -205,12 +222,17 @@ def gui(startup_error=None):
                 continue
             browse.configure(state="normal")
             languages.configure(state="readonly")
+            hd_option.configure(state="normal")
             button.configure(text="Build 100%" if event == "done" else "Build", state="normal")
             progress["value"] = 100 if event == "done" else 0
             elapsed = round(timestamp - active.started)
+            hd_warning = active.hd_warning
             active = None
             if event == "done":
-                message.set(f"Build complete in {elapsed // 60} min {elapsed % 60} sec.\nReopen the builder to play.")
+                result = f"Build complete in {elapsed // 60} min {elapsed % 60} sec."
+                if hd_warning:
+                    result += "\nHD download unavailable. The game uses original textures."
+                message.set(result + "\nReopen the builder to play.")
             else:
                 message.set(value)
         if active is not None:
@@ -222,7 +244,7 @@ def gui(startup_error=None):
     browse = ttk.Button(panel, text="Browse...", command=choose)
     browse.grid(row=3, column=1, padx=(8, 0))
     button = ttk.Button(panel, text="Build", command=start, state="disabled")
-    button.grid(row=7, column=1, sticky="e", padx=(8, 0))
+    button.grid(row=8, column=1, sticky="e", padx=(8, 0))
     window.protocol("WM_DELETE_WINDOW", lambda: window.iconify() if active is not None else window.destroy())
     browse.focus_set()
     window.mainloop()
@@ -234,13 +256,14 @@ def main():
     action.add_argument("--build", type=Path, metavar="ROM")
     action.add_argument("--build-menu", action="store_true", help="Open the menu to select a ROM or change the language.")
     parser.add_argument("--language", choices=LANGUAGES, default="English")
+    parser.add_argument("--hd-textures", action="store_true", help="Download and install the optional 1080p textures.")
     args = parser.parse_args()
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         parser.error("This builder requires Linux x86-64.")
     if args.build:
         report = print if sys.stdout is not None else lambda line: None
         try:
-            report(build(args.build, LANGUAGES[args.language], report) / EXE)
+            report(build(args.build, LANGUAGES[args.language], report, hd_textures=args.hd_textures) / EXE)
         except (OSError, ValueError) as error:
             if sys.stderr is not None:
                 print(error, file=sys.stderr)

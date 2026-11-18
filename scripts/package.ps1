@@ -18,7 +18,7 @@ try {
     Copy-Item -LiteralPath "$build/SuperMario3DLandRecompiled.exe",
         "$build/SDL3.dll", 'extracted/SM3DL-EUR.cxi',
         'extracted/mii.romfs', 'extracted/shared-font.bcfnt' -Destination $dist -Force
-    Copy-Item -LiteralPath 'licenses/Clockwork.txt' -Destination $licenses -Force
+    Copy-Item -LiteralPath 'licenses/Clockwork.txt', 'licenses/CityHash.txt' -Destination $licenses -Force
     Copy-Item -LiteralPath 'build/upstream/SDL3-3.4.0/LICENSE.txt' -Destination "$licenses/SDL.txt" -Force
 
     Copy-Item -LiteralPath 'licenses/LuigisMansion2Recompiled.txt' -Destination $licenses -Force

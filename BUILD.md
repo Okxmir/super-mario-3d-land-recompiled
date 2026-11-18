@@ -63,3 +63,9 @@ Use `--language en`, `fr`, `de`, `es`, `it`, `nl`, `pt`, or `ru`. Omit the optio
 For the graphical builder, run `bash SuperMario3DLandBuilder` from the project or extracted builder folder. Choose the ROM and language, then click **Build**. The builder shows progress and estimates the remaining time once enough compilation steps have finished. When the build completes, run the builder again to launch the game. Use `bash SuperMario3DLandBuilder --build-menu` to return to the ROM and language selector. The game directory is created beside the ROM. The builder writes a log to `build/linux-builder.log`.
 
 Each build uses up to four parallel compile jobs by default. Set `CMAKE_BUILD_PARALLEL_LEVEL=2` if you need to reduce compiler memory use. **F4** cycles through the upscaling options with Vulkan, **F7** switches aspect ratios, and **F9** switches the upper-screen layout.
+
+## Optional HD textures
+
+The graphical Windows and Linux builders download and install the [1080p texture pack by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd) when **Install HD textures (1080p, 107 MB)** is checked. The box starts checked. Clear it to build without the download. If the download fails, the builder finishes with the original textures and shows a message.
+
+For an existing command-line build, run `python tools/hd_pack.py dist` on Windows or `python3 tools/hd_pack.py dist/linux-x64` on Linux. Use the folder containing the game executable if you built to a custom location. The installer extracts only the texture PNGs. With Vulkan, use **HD** next to **Aspect ratio** on Windows or **Ctrl+F10** on Linux to toggle the pack.

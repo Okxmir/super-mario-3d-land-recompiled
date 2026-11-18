@@ -11,6 +11,7 @@
 #undef small
 
 #include "frontend/settings.h"
+#include "hd_texture_pack.h"
 #include "log.h"
 #include "video/pica.h"
 #include "video/gpu/gpu.h"
@@ -53,6 +54,7 @@ public:
             !AppendMenuW(aspects_, MF_STRING, layout_command, widescreen_label()) ||
             !AppendMenuW(aspects_, MF_STRING, first_aspect + 1, L"16:9") ||
             !AppendMenuW(aspects_, MF_STRING, first_aspect + 2, ultrawide_label()) ||
+            !AppendMenuW(bar_, MF_STRING, hd_command, L"&HD") ||
             !SetWindowSubclass(hwnd_, window_proc, subclass_id, reinterpret_cast<DWORD_PTR>(this))) {
             DestroyMenu(bar_);
             bar_ = choices_ = aspects_ = nullptr;
@@ -63,7 +65,7 @@ public:
         title.fMask = MIIM_FTYPE | MIIM_DATA;
         title.fType = MFT_OWNERDRAW;
         title.dwItemData = reinterpret_cast<ULONG_PTR>(this);
-        for (UINT i = 0; i < 2; ++i) {
+        for (UINT i = 0; i < 3; ++i) {
             title.fMask |= MIIM_ID;
             title.wID = first_title + i;
             SetMenuItemInfoW(bar_, i, TRUE, &title);
@@ -108,6 +110,7 @@ private:
     static constexpr UINT first_aspect = 0x5110;
     static constexpr UINT layout_command = 0x5113;
     static constexpr UINT first_title = 0x5120;
+    static constexpr UINT hd_command = first_title + 2;
     static constexpr int scales[] = {1, 2, 4};
     static constexpr const wchar_t *scale_labels[] = {L"1\u00d7", L"2\u00d7", L"4\u00d7"};
     static constexpr wchar_t menu_label[] = L"&Upscaling";
@@ -169,8 +172,11 @@ private:
             if (item == first_aspect) return original_label();
             return item == first_aspect + 1 ? L"16:9" : ultrawide_label();
         }
+        if (item == hd_command) return settings_.hd_textures && hd_available() ? L"&HD \u2713" : L"&HD";
         return item == first_title ? menu_label : aspect_title();
     }
+
+    static bool hd_available() { return pica::gpu::active() && sm3dl::has_hd_texture_pack(); }
 
     void update_theme() {
         HIGHCONTRASTW contrast{sizeof contrast};
@@ -222,7 +228,7 @@ private:
             if (previous_font) SelectObject(dc, previous_font);
             ReleaseDC(hwnd_, dc);
         }
-        const int padding = is_choice(item.itemID) ? 44 : 20;
+        const int padding = is_choice(item.itemID) ? 44 : item.itemID == hd_command ? 28 : 20;
         item.itemWidth = (bounds.right - bounds.left) + MulDiv(padding, dpi_, USER_DEFAULT_SCREEN_DPI);
         item.itemHeight = (bounds.bottom - bounds.top) + MulDiv(6, dpi_, USER_DEFAULT_SCREEN_DPI);
     }
@@ -256,6 +262,7 @@ private:
     void update_checks() const {
         const bool wide_available = pica::gpu::active();
         const int active_aspect = wide_available ? settings_.aspect_ratio : 0;
+        EnableMenuItem(bar_, hd_command, MF_BYCOMMAND | (hd_available() ? MF_ENABLED : MF_GRAYED));
         CheckMenuItem(aspects_, layout_command,
                       MF_BYCOMMAND | (settings_.single_screen ? MF_CHECKED : MF_UNCHECKED));
         for (UINT i = 0; i < 3; ++i) {
@@ -293,7 +300,8 @@ private:
             break;
         case WM_MENUCHAR:
             if (reinterpret_cast<HMENU>(lparam) == menu.bar_) {
-                for (UINT i = 0; i < 2; ++i) {
+                for (UINT i = 0; i < 3; ++i) {
+                    if (i == 2 && !hd_available()) continue;
                     const wchar_t *label = menu.item_label(first_title + i);
                     const wchar_t *accelerator = std::wcschr(label, L'&');
                     if (accelerator && std::towlower(accelerator[1]) == std::towlower(LOWORD(wparam)))
@@ -317,6 +325,15 @@ private:
                 action.type = layout_toggle_event();
                 if (!action.type || !SDL_PushEvent(&action))
                     LOG("window: could not request a screen layout change: %s", SDL_GetError());
+                return 0;
+            }
+            if (command == hd_command) {
+                if (hd_available()) {
+                    menu.settings_.hd_textures = !menu.settings_.hd_textures;
+                    pica::gpu::set_hd_textures(menu.settings_.hd_textures);
+                    menu.settings_.save();
+                    DrawMenuBar(hwnd);
+                }
                 return 0;
             }
             if (is_scale(command)) {
