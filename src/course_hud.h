@@ -11,7 +11,15 @@ inline constexpr int COURSE_HUD_WIDTH = COURSE_HUD_ROW_WIDTH + COURSE_HUD_LABEL_
 inline constexpr int COURSE_HUD_HEIGHT = 40;
 inline constexpr int COURSE_HUD_SCALE = 4;
 
-void enable_course_hud(bool enabled);
+enum class CoursePause { None, Buttons, Confirmation };
+
+struct CoursePauseFrame {
+    CoursePause panel = CoursePause::None;
+    SDL_GPUTexture *sprites = nullptr;
+};
+
+void enable_course_hud(bool enabled, bool centered_pause);
 SDL_GPUTexture *course_hud_frame();
+CoursePauseFrame course_pause_frame();
 
 } // namespace pica::gpu

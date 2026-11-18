@@ -8,6 +8,20 @@ cbuffer Blit : register(b0, space3) {
 };
 
 float4 main(float4 position : SV_Position) : SV_Target0 {
+    if ((Mode.x & 4) != 0) {
+        // Copy the reserve item's circular slot into the rotated HUD atlas.
+        const float2 lcd_size = float2(320, 240);
+        const float2 center = float2(Mode.yz);
+        float2 offset = float2(position.y - Size.y, Size.x - position.x) * Size.z;
+        if (dot(offset, offset) > Size.w * Size.w) discard;
+        if (Mode.w != 0) {
+            // Keep the enlarged caption on an empty slot, even if a hidden
+            // caption draw is still submitted when the filled slot has a gold rim.
+            const float3 rim = Source.SampleLevel(Filter, (center - float2(0, 70)) / lcd_size, 0).rgb;
+            if (min(rim.r, rim.g) - rim.b < 0.4) discard;
+        }
+        return float4(Source.SampleLevel(Filter, (center + offset) / lcd_size, 0).rgb, 1.0);
+    }
     int x = int(Size.y) - 1 - int(position.y);
     int y = (Mode.x & 1) != 0 ? int(Size.x) - 1 - int(position.x) : int(position.x);
     float2 block = float2(1 << Mode.y, 1 << Mode.z);

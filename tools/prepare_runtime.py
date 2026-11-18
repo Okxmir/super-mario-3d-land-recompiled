@@ -17,18 +17,38 @@ def edit(path, transform):
 def frontend(source):
     source = source.replace('#include <cstdio>', '#include <cstdio>\n#include <cmath>')
     source = source.replace('#include "settings.h"\n',
-                            '#include "settings.h"\n#include "course_hud.h"\n#include "hd_texture_pack.h"\n')
+                            '#include "settings.h"\n#include "course_hud.h"\n#include "course_pause_menu.h"\n'
+                            '#include "hd_texture_pack.h"\n')
     source = source.replace('int big = s.swap_screens ? 1 : 0, small = 1 - big;',
                             'int big = s.swap_screens && !s.widescreen_layout() ? 1 : 0, small = 1 - big;')
     source = source.replace('s.swap_screens = !s.swap_screens, relayout();',
                             's.toggle_secondary_screen(), relayout();')
     source = source.replace('        layout.update();\n        s.save();',
-                            '        layout.update();\n        pica::gpu::enable_course_hud(s.widescreen_layout());\n'
+                            '        layout.update();\n'
+                            '        pica::gpu::enable_course_hud(s.widescreen_layout(),\n'
+                            '                                     s.widescreen_layout() && !s.picture_in_picture);\n'
                             '        s.save();')
+    source = source.replace('    SDL_Texture *shown_gpu[2] = {nullptr, nullptr};',
+                            '    SDL_Texture *shown_gpu[2] = {nullptr, nullptr};\n    CoursePauseMenu pause_menu;')
+    source = source.replace('            if (layout.touch_at(lx, ly, tx, ty)) {',
+                            '''            if (pause_menu.panel != pica::gpu::CoursePause::None &&
+                    s.widescreen_layout() && !s.picture_in_picture
+                    ? pause_menu.touch_at(layout.rect[0], lx, ly, tx, ty)
+                    : layout.touch_at(lx, ly, tx, ty)) {''')
+    source = source.replace('        SDL_RenderClear(renderer);\n        for (int i : {layout.first, 1 - layout.first}) {',
+                            '''        SDL_RenderClear(renderer);
+        const auto pause = shown_gpu[0] && s.widescreen_layout() && !s.picture_in_picture
+                         ? pica::gpu::course_pause_frame() : pica::gpu::CoursePauseFrame{};
+        auto *pause_sprites = pause.sprites ? gpu_texture(pause.sprites, SCREEN_HEIGHT * pica::gpu::COURSE_HUD_SCALE,
+                                                         BOTTOM_WIDTH * pica::gpu::COURSE_HUD_SCALE) : nullptr;
+        pause_menu.panel = pause_sprites ? pause.panel : pica::gpu::CoursePause::None;
+        for (int i : {layout.first, 1 - layout.first}) {''')
     source = source.replace('            SDL_RenderTexture(renderer, t, &src, &layout.rect[i]);', '''            SDL_RenderTexture(renderer, t, &src, &layout.rect[i]);
             if (i == 0 && shown_gpu[0] && s.widescreen_layout() && !s.picture_in_picture) {
                 using namespace pica::gpu;
-                if (auto *frame = course_hud_frame()) {
+                if (pause_menu.panel != CoursePause::None) {
+                    pause_menu.draw(renderer, pause_sprites, layout.rect[0]);
+                } else if (auto *frame = course_hud_frame()) {
                     auto *hud = gpu_texture(frame, COURSE_HUD_HEIGHT * COURSE_HUD_SCALE,
                                              COURSE_HUD_WIDTH * COURSE_HUD_SCALE);
                     if (hud) {
@@ -99,6 +119,20 @@ def frontend(source):
             if (single && mode == 1 &&
                 std::lround(layout.w * 3) * 9 != std::lround(layout.h * 3) * 16)
                 fatal("The 16:9 presentation canvas is not exact");
+            if (single) {
+                const CoursePauseMenu menu{pica::gpu::CoursePause::Buttons};
+                const auto pause = menu.destination(top);
+                if (std::fabs(pause.x + pause.w / 2 - (top.x + top.w / 2)) > 0.001f ||
+                    std::fabs(pause.y + pause.h / 2 - (top.y + top.h / 2)) > 0.001f ||
+                    menu.touch_at(top, pause.x - 1, pause.y + pause.h / 2, tx, ty))
+                    fatal("The pause panel is misaligned for aspect ratio %d", mode);
+                for (float row : {75.0f, 136.0f, 197.0f}) {
+                    const float y = pause.y + (row - menu.source().y) * menu.scale();
+                    if (!menu.touch_at(top, pause.x + pause.w / 2, y, tx, ty) ||
+                        std::fabs(tx - 160.0f) > 0.001f || std::fabs(ty - row) > 0.001f)
+                        fatal("Pause button touch coordinates are incorrect for aspect ratio %d", mode);
+                }
+            }
         }
     }
     s.single_screen = false;
@@ -1029,12 +1063,22 @@ uint32_t batch_capacity(size_t size) {
 
 def course_hud_gpu(source):
     source = source.replace('#include "gpu.h"', '#include "gpu.h"\n#include "course_hud.h"')
-    source = source.replace('    uint32_t first, count;\n', '    uint32_t first, count;\n    unsigned hud_part = 0;\n', 1)
+    source = source.replace('    uint32_t first, count;\n',
+                            '    uint32_t first, count;\n    unsigned hud_part = 0;\n'
+                            '    bool pause_sprite = false, hide_pause_title = false;\n', 1)
     source = source.replace('void end_draw() {', '#include "course_hud_gpu.inc"\n\nvoid end_draw() {')
     source = source.replace(
         '        batch.push_back(cur);',
+        '        cur.pause_sprite = false;\n'
         '        cur.hud_part = course_hud_part(cur, regs[TEX0_DIM], regs[BLEND_FUNC]);\n'
+        '        cur.hide_pause_title = hide_course_pause_title(cur);\n'
         '        batch.push_back(cur);')
+    source = source.replace('    for (const DrawRec &d : batch) {\n        begin_render_pass',
+                            '    for (const DrawRec &d : batch) {\n        if (d.hide_pause_title) continue;\n'
+                            '        begin_render_pass')
+    source = source.replace('            if (!d.interpolated) continue;\n            SDL_GPUTexture *color',
+                            '            if (!d.interpolated || d.hide_pause_title) continue;\n'
+                            '            SDL_GPUTexture *color')
     source = source.replace(
         '    clear_fresh(cmd);\n    upload_pending(cmd, &vbuf);',
         '''    clear_fresh(cmd);
@@ -1048,16 +1092,29 @@ def course_hud_gpu(source):
     source = source.replace(
         '    submit_commands(cmd);\n    if (vbuf) SDL_ReleaseGPUBuffer(dev, vbuf);',
         '    if (vbuf && has_hud_draws) draw_course_hud(cmd, vbuf, hud_first);\n'
+        '    if (vbuf) draw_course_pause(cmd, vbuf);\n'
         '    submit_commands(cmd);\n    if (vbuf) SDL_ReleaseGPUBuffer(dev, vbuf);')
     source = source.replace(
-        '    if (alias && overwritten(src)) return false;',
-        '    if (land_bottom) publish_course_hud();\n    if (alias && overwritten(src)) return false;')
-    source = source.replace('std::vector<SDL_GPUTexture *> take_retired_scanouts() {', '''void enable_course_hud(bool enabled) {
+        '    blit(src->tex, f.tex[slot]);',
+        '    blit(src->tex, f.tex[slot]);\n    if (land_bottom) copy_course_reserve(cmd, f.tex[slot]);')
+    source = source.replace(
+        '    submit_commands(cmd);\n\n    SDL_LockMutex(lcd_lock);\n    f.latest = slot;',
+        '    submit_commands(cmd);\n\n    SDL_LockMutex(lcd_lock);\n'
+        '    if (land_bottom) publish_course_hud();\n    f.latest = slot;')
+    source = source.replace('std::vector<SDL_GPUTexture *> take_retired_scanouts() {', '''void enable_course_hud(bool enabled, bool centered_pause) {
     hud_enabled.store(enabled, std::memory_order_relaxed);
+    centered_pause_enabled.store(centered_pause, std::memory_order_relaxed);
 }
 
 SDL_GPUTexture *course_hud_frame() {
     return hud_latest.load(std::memory_order_acquire);
+}
+
+CoursePauseFrame course_pause_frame() {
+    SDL_LockMutex(lcd_lock);
+    const auto frame = pause_latest;
+    SDL_UnlockMutex(lcd_lock);
+    return frame;
 }
 
 std::vector<SDL_GPUTexture *> take_retired_scanouts() {''')
