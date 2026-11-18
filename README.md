@@ -2,6 +2,22 @@
 
 An experimental native Windows x64 port of Super Mario 3D Land. It recompiles the European game's ARM code and reads the assets from a local ROM.
 
+## Current features
+
+- Native Windows x64 executable built from the supported European ROM.
+- Vulkan rendering with a 60 Hz presentation target and camera-motion smoothing, while preserving the original 30 Hz game logic. Performance depends on the PC and the scene.
+- **Upscaling** menu with 1×, 2×, and 4× options and a saved selection between launches.
+- Controller and keyboard support, with mouse input for the touchscreen.
+- Build-time selection of eight game languages, including English, French, German, Spanish, Italian, Dutch, Portuguese, and Russian.
+- Local save data with automatic backups during save formatting.
+- One-command portable Windows build that downloads its compiler, Python, and other required tools automatically.
+- Build checks for ROM integrity, native startup, textures, display colors, and controller input mapping.
+
+## Future plans
+
+- Add native Linux support.
+- Add more features and quality-of-life improvements.
+
 ## Build and play
 
 Extract or clone this repository. Open the project folder in File Explorer, type `cmd` in the address bar, and press Enter. Use your own decrypted European ROM (`CTR-P-AREP`) in `.3ds`, `.cci`, or `.cxi` format.
