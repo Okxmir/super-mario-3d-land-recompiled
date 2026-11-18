@@ -7,7 +7,7 @@ An experimental native Windows x64 and Linux x86-64 port of Super Mario 3D Land.
 - Native Windows x64 and Linux x86-64 executables built from the supported European ROM.
 - Vulkan rendering with a 60 Hz presentation target and camera-motion smoothing, while preserving the original 30 Hz game logic. Performance depends on the PC and the scene.
 - 1×, 2×, and 4× upscaling with a saved selection. Use the **Upscaling** menu on Windows or **F4** on Linux.
-- Optional 1080p texture pack by Henriko Magnifico. The graphical builders download it during the build when **Install HD textures** is checked. With Vulkan, click **HD** on Windows or use **Ctrl+F10** on Linux to switch textures while playing.
+- Optional [1080p texture pack by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd). The graphical builders download and install it during the build when **Install HD textures** is checked. The option starts checked. With Vulkan, click **HD** on Windows or use **Ctrl+F10** on Linux to switch textures while playing.
 - Original (5:3), 16:9, and experimental 21:9 aspect ratios. Use **F7** or the localized **Aspect ratio** menu on Windows. The selected format is saved between launches.
 - **Widescreen** or **F9** enlarges the upper screen. During a course, Vulkan displays the three Star Medals, reserve item and lives between the coin counter and timer, with the course label in the bottom-right corner. Use **R3** or **Tab** to switch between these indicators and the touchscreen inset.
 - Controller and keyboard support, with mouse input for the touchscreen.
