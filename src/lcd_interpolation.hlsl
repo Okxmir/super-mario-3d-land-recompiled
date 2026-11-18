@@ -16,7 +16,10 @@ float difference(float3 a, float3 b) {
 // One candidate per fragment. Sample the same positions across the whole screen
 // to reject parallax, stationary overlays and cuts before moving any pixels.
 float4 estimate(float4 position : SV_Position) : SV_Target0 {
-    float2 delta = (int2(position.xy) - Radius) / NativeSize;
+    uint width, height;
+    Current.GetDimensions(width, height);
+    float2 nativeSize = float2(width, height) * (NativeSize.y / float(height));
+    float2 delta = (int2(position.xy) - Radius) / nativeSize;
     float sum = 0.0;
     int improved = 0, conflicts = 0, mismatches = 0;
     const int Columns = 10, Rows = 8;

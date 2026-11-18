@@ -233,6 +233,7 @@ int wmain(int argc, wchar_t **argv) {
     SetUnhandledExceptionFilter(report_access_violation);
     const std::wstring_view option = argc > 1 ? argv[1] : L"";
     if (argc == 2 && option == L"--verify-gamepad") return frontend::verify_gamepad();
+    if (argc == 2 && option == L"--verify-aspect-ratio") return frontend::verify_aspect_ratio();
     if (argc == 2 && option == L"--verify-textures") return verify_texture_updates();
     if (argc == 2 && option == L"--verify-display-colors") return verify_display_colors();
     const bool verify = argc == 3 && option == L"--verify-startup";

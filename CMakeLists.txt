@@ -93,6 +93,7 @@ add_test(NAME native_startup_routine
 add_test(NAME etc1a4_texture_updates COMMAND SuperMario3DLand --verify-textures)
 add_test(NAME native_display_colors COMMAND SuperMario3DLand --verify-display-colors)
 add_test(NAME gamepad_mapping COMMAND SuperMario3DLand --verify-gamepad)
+add_test(NAME display_aspect_ratios COMMAND SuperMario3DLand --verify-aspect-ratio)
 
 set(DXC "${UPSTREAM}/dxc-1.8.2505.1/bin/x64/dxc.exe")
 set(LCD_HEADER "${CMAKE_CURRENT_BINARY_DIR}/sm3dl_lcd.inc")

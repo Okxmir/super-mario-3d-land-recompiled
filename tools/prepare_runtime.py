@@ -15,10 +15,80 @@ def edit(path, transform):
 
 
 def frontend(source):
+    source = source.replace('#include <cstdio>', '#include <cstdio>\n#include <cmath>')
+    source = source.replace(
+        '        const float W[2] = {top_width, float(BOTTOM_WIDTH)}, H = float(SCREEN_HEIGHT);',
+        '''        constexpr float top_widths[] = {float(TOP_WIDTH), SCREEN_HEIGHT * 16.0f / 9.0f,
+                                        SCREEN_HEIGHT * 21.0f / 9.0f};
+        const float display_width = std::min(top_width, top_widths[std::clamp(s.aspect_ratio, 0, 2)]);
+        const float W[2] = {display_width, float(BOTTOM_WIDTH)}, H = float(SCREEN_HEIGHT);''')
+    source = source.replace(
+        '        src[0] = {0, 0, W[0], H}, src[1] = {0, 0, W[1], H};',
+        '        src[0] = {(top_width - W[0]) / 2, 0, W[0], H}, src[1] = {0, 0, W[1], H};')
+    source = source.replace(
+        'SDL_SetRenderLogicalPresentation(renderer, int(layout.w), int(layout.h), SDL_LOGICAL_PRESENTATION_LETTERBOX);',
+        '''SDL_SetRenderLogicalPresentation(renderer, int(std::lround(layout.w * 3)),
+                                         int(std::lround(layout.h * 3)), SDL_LOGICAL_PRESENTATION_LETTERBOX);
+        // Three canvas units per native pixel represent the 16:9 width exactly.
+        SDL_SetRenderScale(renderer, 3.0f, 3.0f);''')
+    source = source.replace(
+        's.single_screen = !s.single_screen, relayout();', 's.toggle_screen_layout(), relayout();')
     source = source.replace('#include "handoff.h"\n', '').replace('#include "launcher.h"\n', '')
     source = source.replace('#include "settings.h"\n',
                             '#include "settings.h"\n#include "resolution_menu.h"\n#include "virtual_gamepad.h"\n')
-    source = source.replace("Input input() {", """int verify_gamepad() {
+    source = source.replace("Input input() {", """int verify_aspect_ratio() {
+    auto &s = settings();
+    const Settings previous = s;
+    s.smart_layout = false;
+    s.swap_screens = false;
+    s.picture_in_picture = true;
+    constexpr int rendered_widths[] = {400, 428, 560};
+    constexpr int numerators[] = {5, 16, 7}, denominators[] = {3, 9, 3};
+    for (int mode = 0; mode < 3; ++mode) {
+        s.aspect_ratio = mode;
+        for (bool single : {false, true}) {
+            s.single_screen = single;
+            Layout layout;
+            layout.top_width = float(rendered_widths[mode]);
+            layout.update();
+            const auto &top = layout.rect[0];
+            const auto &crop = layout.src[0];
+            if (std::fabs(top.w * denominators[mode] - top.h * numerators[mode]) > 0.001f ||
+                std::fabs(crop.w - top.w) > 0.001f || crop.x < 0 ||
+                std::fabs(2 * crop.x + crop.w - layout.top_width) > 0.001f)
+                fatal("Incorrect aspect ratio or nonuniform scaling for mode %d", mode);
+            const auto &bottom = layout.rect[1];
+            float tx, ty;
+            if (!layout.touch_at(bottom.x + bottom.w * 0.25f, bottom.y + bottom.h * 0.75f, tx, ty) ||
+                std::fabs(tx - 80.0f) > 0.001f || std::fabs(ty - 180.0f) > 0.001f)
+                fatal("Touchscreen coordinates changed for aspect ratio %d", mode);
+            if (single && mode == 1 &&
+                std::lround(layout.w * 3) * 9 != std::lround(layout.h * 3) * 16)
+                fatal("The 16:9 presentation canvas is not exact");
+        }
+    }
+    s.single_screen = false;
+    s.swap_screens = true;
+    s.smart_layout = true;
+    s.picture_in_picture = false;
+    s.aspect_ratio = 1;
+    s.toggle_screen_layout();
+    Layout selected;
+    selected.top_width = 428.0f;
+    selected.update();
+    if (!s.single_screen || s.swap_screens || s.smart_layout || !s.picture_in_picture ||
+        selected.first != 0 || !selected.shown[1] || selected.rect[1].h >= selected.rect[0].h)
+        fatal("F9 did not select the upper screen with a touchscreen inset");
+    s.toggle_screen_layout();
+    selected.update();
+    if (s.single_screen || selected.h != 2 * SCREEN_HEIGHT)
+        fatal("F9 did not restore the two stacked screens");
+    s = previous;
+    std::puts("Exact display ratios, centered overscan crop and touchscreen mapping verified.");
+    return 0;
+}
+
+int verify_gamepad() {
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     if (!SDL_Init(SDL_INIT_GAMEPAD)) fatal("Gamepad initialization failed: %s", SDL_GetError());
     {
@@ -92,6 +162,15 @@ Input input() {""")
     source = source.replace("    pica::set_resolution_scale(s.resolution);",
                             "    pica::set_resolution_scale(s.resolution);\n"
                             '    LOG("graphics: resolution %dx", std::clamp(s.resolution, 1, 4));')
+    source = source.replace("    pica::set_widescreen(s.widescreen);",
+                            "    pica::set_aspect_ratio(pica::gpu::active() ? s.aspect_ratio : 0);")
+    source = source.replace("e.key.scancode == SDL_SCANCODE_F7)",
+                            "e.key.scancode == SDL_SCANCODE_F7 && pica::gpu::active())")
+    source = source.replace("    pica::set_camera_zoom(float(s.camera_zoom) / 100.0f);",
+                            "    pica::set_camera_zoom(1.0f);")
+    source = source.replace("                    s.widescreen = !s.widescreen;",
+                            "                    s.aspect_ratio = (s.aspect_ratio + 1) % 3;\n"
+                            "                    s.widescreen = s.aspect_ratio != 0;")
     # This title draws both LCDs into 400-row targets. The generic HUD
     # heuristic treats parts of the lower LCD as top-screen overlays.
     source = source.replace("    pica::set_hud_scale(float(s.hud_size) / 100.0f);\n", "")
@@ -217,6 +296,7 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
     source = source.replace(
         "    auto show_message = [&](std::string text) { message = std::move(text), message_until = SDL_GetTicks() + 2500; };",
         """    bool redraw_requested = true;
+    bool first_layout = true;
     bool overlay_was_visible = false;
     auto show_message = [&](std::string text) {
         message = std::move(text);
@@ -224,6 +304,15 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
         redraw_requested = true;
     };""")
     source = source.replace("    auto relayout = [&] {\n", "    auto relayout = [&] {\n        redraw_requested = true;\n")
+    source = source.replace("        float old_h = layout.h;", "        float old_w = layout.w, old_h = layout.h;")
+    source = source.replace(
+        "if (old_h != layout.h && !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN))",
+        "if ((first_layout || old_w != layout.w || old_h != layout.h) &&\n"
+        "            !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN))")
+    source = source.replace(
+        "SDL_SetWindowSize(window, ww, int(float(ww) * layout.h / layout.w));",
+        "SDL_SetWindowSize(window, ww, int(std::lround(float(ww) * layout.h / layout.w)));")
+    source = source.replace("    };\n    relayout();", "        first_layout = false;\n    };\n    relayout();")
     source = source.replace(
         "        while (SDL_PollEvent(&e)) {\n",
         """        while (SDL_PollEvent(&e)) {
@@ -416,9 +505,9 @@ def gpu(source):
         "void begin_list() {\n    list_hashes.clear();",
         """void begin_list() {
     list_hashes.clear();
-    int scale;
-    requested_enhancement(&render_margin, &scale);
-    if (scale != render_scale) {
+    int margin, scale;
+    requested_enhancement(&margin, &scale);
+    if (scale != render_scale || margin != render_margin) {
         // Preserve guest-visible color buffers before rebuilding targets at the new size.
         for (const auto &s : surfaces) {
             if (!s->depth && s->drawn && !s->reload && !overwritten(s.get()))
@@ -431,6 +520,7 @@ def gpu(source):
         this_frame.clear();
         interp_this = false;
         render_scale = scale;
+        render_margin = margin;
     }""")
     source = source.replace("SDL_Mutex *lcd_lock;",
                             "SDL_Mutex *lcd_lock;\nstd::vector<SDL_GPUTexture *> retired_scanouts;")
@@ -645,8 +735,7 @@ def lcd_smoothing(source):
             smoother.original_pending = true;
         // Only fill a missing refresh when the game provides a new 30 Hz frame.
         // A cut or stall must never accumulate extra latency.
-        } else if (previous_valid && previous && gap >= 2 && gap <= 3 &&
-                   *width * frontend::SCREEN_HEIGHT == *height * frontend::TOP_WIDTH) {
+        } else if (previous_valid && previous && gap >= 2 && gap <= 3) {
             if (auto *mid = smoother.render(previous, frame, *width, *height)) {
                 frame = mid;
                 *interpolated = true;
@@ -665,6 +754,17 @@ def lcd_smoothing(source):
 
 
 def land_lcd(source):
+    source = source.replace(
+        '    int sx0 = 0, sy0 = 0, sx1 = int(w) - 1, sy1 = int(h) - 1 + 2 * m;',
+        '''    // Both LCDs reuse the same render target, but the lower LCD has a
+    // 320-row viewport. Place it unchanged inside the widened target's center.
+    if (w == frontend::SCREEN_HEIGHT && h == frontend::TOP_WIDTH &&
+        2 * hh == frontend::BOTTOM_WIDTH) {
+        cur_ky = 1.0f;
+        d.viewport.y += float(m * s);
+        d.viewport.h = 2 * hh * float(s);
+    }
+    int sx0 = 0, sy0 = 0, sx1 = int(w) - 1, sy1 = int(h) - 1 + 2 * m;''')
     source = source.replace('#include "gpu.h"', '#include "gpu.h"\n#include "frontend/frontend.h"')
     source = source.replace('#include "shaders.inc"', '#include "shaders.inc"\n#include "sm3dl_lcd.inc"')
     source = source.replace("SPIRV_blit_lcd_frag, sizeof SPIRV_blit_lcd_frag", "sm3dl_lcd, sizeof sm3dl_lcd")
@@ -707,12 +807,12 @@ def land_lcd(source):
     source = source.replace(
         "    int w = int(src->th >> vs), h = int(src->tw >> hs); // upright: rows of the output become columns\n"
         "    (void)out_w, (void)out_h;",
-        """    const int w = rgb565 ? int(out_h * src->scale) : int(src->th >> vs);
+        """    const int w = rgb565 ? int((out_h + (land_top ? 2 * src->margin : 0)) * src->scale) : int(src->th >> vs);
     const int h = rgb565 ? int(out_w * src->scale) : int(src->tw >> hs);""")
     source = source.replace(
         "{int32_t(flags & 1), int32_t(hs), int32_t(vs), 0}};",
         "{int32_t((flags & 1) | (rgb565 ? 2 : 0)), int32_t(hs), int32_t(vs), "
-        "int32_t((row + src->margin) * src->scale)}};")
+        "int32_t((row + (land_top ? 0 : src->margin)) * src->scale)}};")
     source = source.replace("struct LcdFrames {", "struct LcdFrames {\n    uint32_t scanout_bytes = 0;")
     source = source.replace("    LcdFrames &f = lcd[out];",
         "    LcdFrames &f = lcd[out];\n    f.scanout_bytes = out_w * out_h * fb_bpp((flags >> 12) & 7);")
@@ -1177,7 +1277,7 @@ def prepare(upstream, output):
     edit(src / "frontend/sdl.cpp", frontend)
     edit(src / "frontend/frontend.h", lambda source: source.replace(
         "const char *cli_dump, bool force_launcher, bool play", "const char *cli_dump").replace(
-        "Input input();", "Input input();\nint verify_gamepad();").replace(
+        "Input input();", "Input input();\nint verify_gamepad();\nint verify_aspect_ratio();").replace(
         "#include <cstdint>", "#include <cstdint>\n#include <vector>").replace(
         "// queues `frames` stereo", "// Signals that the LCD updates for one VBlank are ready.\n"
         "void finish_scanout(const std::vector<SDL_GPUTexture *> &retired);\n\n// queues `frames` stereo"))
@@ -1196,14 +1296,45 @@ def prepare(upstream, output):
         '    {0x0004000000053F00, "sm3dl", "", "SuperMario3DLand", Region::EUR},'))
     edit(src / "platform.cpp", platform)
     edit(src / "frontend/settings.h", lambda source: source.replace(
-        "    int volume = 100;", "    int volume = 25;").replace("int hud_size = 80;", "int hud_size = 100;"))
+        "    int volume = 100;", "    int volume = 25;").replace("int hud_size = 80;", "int hud_size = 100;").replace(
+        "    int resolution = 1;", "    int aspect_ratio = 0; // 0 original, 1 16:9, 2 21:9\n    int resolution = 1;").replace(
+        "    void reset_controls();", '''    void reset_controls();
+    void toggle_screen_layout() {
+        single_screen = !single_screen;
+        if (single_screen) {
+            swap_screens = false;
+            smart_layout = false;
+            picture_in_picture = true;
+        }
+    }'''))
     edit(src / "frontend/settings.cpp", lambda source: source.replace(
         'else if (k == "volume") volume = std::atoi(v.c_str());',
         'else if (k == "volume") volume = std::clamp(std::atoi(v.c_str()), 0, 100);').replace(
         'else if (k == "language") language = std::clamp(std::atoi(v.c_str()), 1, 5);',
         'else if (k == "language") language = std::atoi(v.c_str());').replace(
         '        else if (k == "frame_interpolation") frame_interpolation = b;\n', '').replace(
-        '      << "frame_interpolation=" << frame_interpolation << "\\n"\n', ''))
+        '      << "frame_interpolation=" << frame_interpolation << "\\n"\n', '').replace(
+        '    std::ifstream f(file());', '    bool has_aspect_ratio = false;\n    std::ifstream f(file());').replace(
+        '        else if (k == "widescreen") widescreen = b;',
+        '        else if (k == "widescreen") widescreen = b;\n'
+        '        else if (k == "aspect_ratio") {\n'
+        '            aspect_ratio = std::clamp(std::atoi(v.c_str()), 0, 2);\n'
+        '            has_aspect_ratio = true;\n'
+        '        }').replace(
+        '\n}\n\nvoid Settings::save() const',
+        '\n    if (!has_aspect_ratio) aspect_ratio = widescreen ? 1 : 0;\n'
+        '    widescreen = aspect_ratio != 0;\n}\n\nvoid Settings::save() const').replace(
+        '      << "widescreen=" << widescreen << "\\n"',
+        '      << "aspect_ratio=" << aspect_ratio << "\\n"\n'
+        '      << "widescreen=" << widescreen << "\\n"'))
+    edit(src / "video/pica.h", lambda source: source.replace(
+        'void set_widescreen(bool on);', 'void set_aspect_ratio(int mode);\nvoid set_widescreen(bool on);'))
+    edit(src / "video/widescreen.cpp", lambda source: source.replace(
+        'void set_widescreen(bool on) { requested_margin = on ? 14 : 0; }',
+        'void set_aspect_ratio(int mode) {\n'
+        '    constexpr int margins[] = {0, 14, 80};\n'
+        '    requested_margin = margins[std::clamp(mode, 0, 2)];\n'
+        '}\nvoid set_widescreen(bool on) { set_aspect_ratio(on ? 1 : 0); }'))
     edit(src / "hle/cfg.cpp", lambda source: source.replace(
         '    default: return 110; // United Kingdom',
         '    case 8: return 94;  // Netherlands\n'

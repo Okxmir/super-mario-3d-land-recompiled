@@ -4,6 +4,8 @@
 #include <windows.h>
 #include <commctrl.h>
 #include <dwmapi.h>
+#include <cwctype>
+#include <cwchar>
 
 // The Windows SDK defines this name as a macro. The SDL layout uses it as a local variable.
 #undef small
@@ -11,6 +13,7 @@
 #include "frontend/settings.h"
 #include "log.h"
 #include "video/pica.h"
+#include "video/gpu/gpu.h"
 
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "dwmapi.lib")
@@ -34,12 +37,24 @@ public:
             return;
         }
 
+        aspects_ = CreatePopupMenu();
+        if (!aspects_ || !AppendMenuW(bar_, MF_POPUP, reinterpret_cast<UINT_PTR>(aspects_), aspect_title())) {
+            if (aspects_) DestroyMenu(aspects_);
+            DestroyMenu(bar_);
+            bar_ = choices_ = aspects_ = nullptr;
+            LOG("window: could not create the aspect ratio menu");
+            return;
+        }
+
         if (!AppendMenuW(choices_, MF_STRING, first_command, scale_labels[0]) ||
             !AppendMenuW(choices_, MF_STRING, first_command + 1, scale_labels[1]) ||
             !AppendMenuW(choices_, MF_STRING, first_command + 2, scale_labels[2]) ||
+            !AppendMenuW(aspects_, MF_STRING, first_aspect, original_label()) ||
+            !AppendMenuW(aspects_, MF_STRING, first_aspect + 1, L"16:9") ||
+            !AppendMenuW(aspects_, MF_STRING, first_aspect + 2, ultrawide_label()) ||
             !SetWindowSubclass(hwnd_, window_proc, subclass_id, reinterpret_cast<DWORD_PTR>(this))) {
             DestroyMenu(bar_);
-            bar_ = choices_ = nullptr;
+            bar_ = choices_ = aspects_ = nullptr;
             LOG("window: could not install the resolution menu");
             return;
         }
@@ -47,8 +62,16 @@ public:
         title.fMask = MIIM_FTYPE | MIIM_DATA;
         title.fType = MFT_OWNERDRAW;
         title.dwItemData = reinterpret_cast<ULONG_PTR>(this);
-        SetMenuItemInfoW(bar_, 0, TRUE, &title);
-        for (UINT i = 0; i < 3; ++i) SetMenuItemInfoW(choices_, i, TRUE, &title);
+        for (UINT i = 0; i < 2; ++i) {
+            title.fMask |= MIIM_ID;
+            title.wID = first_title + i;
+            SetMenuItemInfoW(bar_, i, TRUE, &title);
+        }
+        title.fMask &= ~MIIM_ID;
+        for (UINT i = 0; i < 3; ++i) {
+            SetMenuItemInfoW(choices_, i, TRUE, &title);
+            SetMenuItemInfoW(aspects_, i, TRUE, &title);
+        }
         update_theme();
         update_checks();
     }
@@ -76,13 +99,56 @@ public:
 private:
     static constexpr UINT_PTR subclass_id = 1;
     static constexpr UINT first_command = 0x5100;
+    static constexpr UINT first_aspect = 0x5110;
+    static constexpr UINT first_title = 0x5120;
     static constexpr int scales[] = {1, 2, 4};
     static constexpr const wchar_t *scale_labels[] = {L"1\u00d7", L"2\u00d7", L"4\u00d7"};
     static constexpr wchar_t menu_label[] = L"&Upscaling";
 
-    static bool is_choice(UINT item) { return item >= first_command && item < first_command + 3; }
-    static const wchar_t *item_label(UINT item) {
-        return is_choice(item) ? scale_labels[item - first_command] : menu_label;
+    static bool is_scale(UINT item) { return item >= first_command && item < first_command + 3; }
+    static bool is_aspect(UINT item) { return item >= first_aspect && item < first_aspect + 3; }
+    static bool is_choice(UINT item) { return is_scale(item) || is_aspect(item); }
+
+    const wchar_t *aspect_title() const {
+        switch (settings_.language) {
+        case 2: return L"&Format d'image";
+        case 3: return L"&Bildformat";
+        case 4: return L"&Formato immagine";
+        case 5: return L"&Relaci\u00f3n de aspecto";
+        case 8: return L"&Beeldverhouding";
+        case 9: return L"&Propor\u00e7\u00e3o da imagem";
+        case 10: return L"&\u0421\u043e\u043e\u0442\u043d\u043e\u0448\u0435\u043d\u0438\u0435 \u0441\u0442\u043e\u0440\u043e\u043d";
+        default: return L"&Aspect ratio";
+        }
+    }
+
+    const wchar_t *original_label() const {
+        switch (settings_.language) {
+        case 4: return L"Originale (5:3)";
+        case 8: return L"Origineel (5:3)";
+        case 10: return L"\u0418\u0441\u0445\u043e\u0434\u043d\u044b\u0439 (5:3)";
+        default: return L"Original (5:3)";
+        }
+    }
+
+    const wchar_t *ultrawide_label() const {
+        switch (settings_.language) {
+        case 2: return L"21:9 (exp\u00e9rimental)";
+        case 3: return L"21:9 (experimentell)";
+        case 4: return L"21:9 (sperimentale)";
+        case 8: return L"21:9 (experimenteel)";
+        case 10: return L"21:9 (\u044d\u043a\u0441\u043f\u0435\u0440\u0438\u043c\u0435\u043d\u0442\u0430\u043b\u044c\u043d\u043e)";
+        default: return L"21:9 (experimental)";
+        }
+    }
+
+    const wchar_t *item_label(UINT item) const {
+        if (is_scale(item)) return scale_labels[item - first_command];
+        if (is_aspect(item)) {
+            if (item == first_aspect) return original_label();
+            return item == first_aspect + 1 ? L"16:9" : ultrawide_label();
+        }
+        return item == first_title ? menu_label : aspect_title();
     }
 
     void update_theme() {
@@ -146,7 +212,10 @@ private:
         FillRect(item.hDC, &item.rcItem, brush ? brush : GetSysColorBrush(COLOR_MENUBAR));
         const HGDIOBJ previous_font = menu_font_ ? SelectObject(item.hDC, menu_font_) : nullptr;
         const int previous_mode = SetBkMode(item.hDC, TRANSPARENT);
-        const COLORREF previous_color = SetTextColor(item.hDC, selected ? GetSysColor(COLOR_HIGHLIGHTTEXT) : menu_text_);
+        const bool disabled = item.itemState & (ODS_DISABLED | ODS_GRAYED);
+        const COLORREF text_color = disabled ? GetSysColor(COLOR_GRAYTEXT)
+                                            : selected ? GetSysColor(COLOR_HIGHLIGHTTEXT) : menu_text_;
+        const COLORREF previous_color = SetTextColor(item.hDC, text_color);
         RECT text = item.rcItem;
         UINT flags = DT_CENTER | DT_VCENTER | DT_SINGLELINE;
         if (is_choice(item.itemID)) {
@@ -164,9 +233,15 @@ private:
     }
 
     void update_checks() const {
+        const bool wide_available = pica::gpu::active();
+        const int active_aspect = wide_available ? settings_.aspect_ratio : 0;
         for (UINT i = 0; i < 3; ++i) {
             CheckMenuItem(choices_, first_command + i,
                           MF_BYCOMMAND | (scales[i] == settings_.resolution ? MF_CHECKED : MF_UNCHECKED));
+            CheckMenuItem(aspects_, first_aspect + i,
+                          MF_BYCOMMAND | (int(i) == active_aspect ? MF_CHECKED : MF_UNCHECKED));
+            EnableMenuItem(aspects_, first_aspect + i,
+                           MF_BYCOMMAND | (i == 0 || wide_available ? MF_ENABLED : MF_GRAYED));
         }
     }
 
@@ -190,9 +265,18 @@ private:
             }
             break;
         }
+        case WM_INITMENUPOPUP:
+            menu.update_checks();
+            break;
         case WM_MENUCHAR:
-            if (reinterpret_cast<HMENU>(lparam) == menu.bar_ && (LOWORD(wparam) == L'u' || LOWORD(wparam) == L'U'))
-                return MAKELRESULT(0, MNC_EXECUTE);
+            if (reinterpret_cast<HMENU>(lparam) == menu.bar_) {
+                for (UINT i = 0; i < 2; ++i) {
+                    const wchar_t *label = menu.item_label(first_title + i);
+                    const wchar_t *accelerator = std::wcschr(label, L'&');
+                    if (accelerator && std::towlower(accelerator[1]) == std::towlower(LOWORD(wparam)))
+                        return MAKELRESULT(i, MNC_EXECUTE);
+                }
+            }
             break;
         case WM_SETTINGCHANGE:
         case WM_THEMECHANGED:
@@ -205,7 +289,7 @@ private:
         }
         if (message == WM_COMMAND && HIWORD(wparam) == 0 && lparam == 0) {
             const UINT command = LOWORD(wparam);
-            if (is_choice(command)) {
+            if (is_scale(command)) {
                 const int scale = scales[command - first_command];
                 if (menu.settings_.resolution != scale) {
                     menu.settings_.resolution = scale;
@@ -216,6 +300,16 @@ private:
                 }
                 return 0;
             }
+            if (is_aspect(command)) {
+                if (command != first_aspect && !pica::gpu::active()) return 0;
+                menu.settings_.aspect_ratio = int(command - first_aspect);
+                menu.settings_.widescreen = menu.settings_.aspect_ratio != 0;
+                pica::set_aspect_ratio(menu.settings_.aspect_ratio);
+                menu.settings_.save();
+                menu.update_checks();
+                LOG("graphics: aspect ratio set to %d", menu.settings_.aspect_ratio);
+                return 0;
+            }
         }
         return DefSubclassProc(hwnd, message, wparam, lparam);
     }
@@ -224,6 +318,7 @@ private:
     HWND hwnd_ = nullptr;
     HMENU bar_ = nullptr;
     HMENU choices_ = nullptr;
+    HMENU aspects_ = nullptr;
     HBRUSH menu_brush_ = nullptr;
     HFONT menu_font_ = nullptr;
     COLORREF menu_text_ = GetSysColor(COLOR_MENUTEXT);
