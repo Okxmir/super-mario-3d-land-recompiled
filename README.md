@@ -9,9 +9,10 @@ An experimental native Windows x64 and Linux x86-64 port of Super Mario 3D Land.
 - 1×, 2×, and 4× upscaling with a saved selection. Use the **Upscaling** menu on Windows or **F4** on Linux.
 - Optional [1080p texture pack by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd). The graphical builders download and install it during the build when **Install HD textures** is checked. The option starts checked. With Vulkan, click **HD** on Windows or use **Ctrl+F10** on Linux to switch textures while playing.
 - Original (5:3), 16:9, and experimental 21:9 aspect ratios. Use **F7** or the localized **Aspect ratio** menu on Windows. The selected format is saved between launches.
+- Maximizing **16:9 Widescreen** extends the 3D view to fill the wider window while keeping the title bar and menus visible. **F11** toggles fullscreen separately.
 - **Widescreen** or **F9** enlarges the upper screen. During a course, Vulkan displays the three Star Medals, reserve item and lives between the coin counter and timer, with the course label in the bottom-right corner. Use **R3** or **Tab** to switch between these indicators and the touchscreen inset.
 - In Widescreen with the touchscreen hidden, the pause buttons and confirmation dialogs appear in the center. The HD pack also sharpens the English and French pause labels.
-- Controller and keyboard support, with mouse input for the touchscreen.
+- Controller and keyboard support, with mouse input for the touchscreen. D-pad Up uses the reserve item during a course, even when the touchscreen is hidden.
 - Build-time selection of eight game languages, including English, French, German, Spanish, Italian, Dutch, Portuguese, and Russian.
 - Local save data with automatic backups during save formatting.
 - One-command portable Windows build that downloads its compiler, Python, and other required tools automatically.
@@ -47,9 +48,7 @@ bash build.sh --cartridge "YourRom.3ds" --language en
 
 For the graphical builder, run `bash SuperMario3DLandBuilder`. It creates the game folder beside the selected ROM. Open it again to launch the game. Run `bash SuperMario3DLandBuilder --build-menu` to return to the setup menu.
 
-## Controls and display
-
-Use an SDL-compatible controller or the keyboard. On an Xbox controller, the left stick moves, **A** jumps, **X** runs, and **Menu** pauses. On a QWERTY keyboard use **WASD**, **J** to jump, **U** to run, and **Enter** to pause. Use the mouse on the lower screen.
+## Display
 
 Use the Windows **Upscaling** menu or **F4** on Linux to select 1×, 2×, or 4×. Vulkan targets a 60 Hz refresh while keeping the original 30 Hz game logic. A refresh can repeat the original image when camera motion cannot be matched reliably.
 
@@ -62,3 +61,35 @@ The aspect ratio applies to the upper game screen. Click **Widescreen** below **
 The title screen, the opening cinematic, the first world map, and early gameplay in course 1-1 have been checked locally. On first launch, decline StreetPass to play offline.
 
 The ROM, compiled game files, and saves remain local. See [LICENSE](LICENSE) and the [third-party license notices](licenses/).
+
+## Default controls
+
+Keyboard bindings are shown for QWERTY and follow physical key positions. Use an SDL-compatible controller; the face buttons are mapped by position, not by their printed letters.
+
+| Game input | Keyboard / mouse | Xbox controller | PlayStation controller |
+| --- | --- | --- | --- |
+| Move (Circle Pad) | **W / A / S / D** | Left stick | Left stick |
+| Jump (3DS B) | **J** | **A** | **Cross** |
+| Run (3DS Y) | **U** | **X** | **Square** |
+| 3DS A | **K** | **B** | **Circle** |
+| 3DS X | **I** | **Y** | **Triangle** |
+| 3DS L / R | **Q / E** | **LB / RB** | **L1 / R1** |
+| 3DS ZL / ZR input | **1 / 3** | **LT / RT** | **L2 / R2** |
+| Pause (Start) | **Enter** | **Menu** | **Options** |
+| Select | **Backspace** | **View** | **Share / Create** |
+| 3DS D-pad | **Arrow keys** | D-pad | D-pad |
+| Use the reserve item during a course | Click its slot on the touchscreen | **D-pad Up** | **D-pad Up** |
+| Touchscreen | Left mouse button on the lower screen or its inset | — | — |
+| Show or hide the touchscreen inset in Widescreen | **Tab** | **R3** (press the right stick) | **R3** (press the right stick) |
+
+| Display shortcut | Action |
+| --- | --- |
+| **F4** (Linux) / **Upscaling** menu (Windows) | Cycle or select 1×, 2× or 4× |
+| **F7** / **Aspect ratio** menu (Windows) | Cycle or select Original, 16:9 or 21:9 with Vulkan |
+| **F9** / **Widescreen** menu item (Windows) | Switch between stacked screens and the upper-screen layout |
+| **F8** | Toggle the secondary-screen inset |
+| **F6** / **F5** | Toggle the adaptive layout / cycle its layout for the current scene |
+| **F11** | Toggle fullscreen manually |
+| **Ctrl+F10** (Linux) / **HD** button (Windows) | Toggle the installed HD pack with Vulkan |
+| **F10** | Start or stop texture dumping |
+| **F12** / **Shift+F12** | Save a screenshot and diagnostics / capture a short frame sequence |

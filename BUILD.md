@@ -18,7 +18,9 @@ In PowerShell, use `./build.cmd` with the same arguments. Set `-Language` to `en
 
 After the build, open `dist/SuperMario3DLandRecompiled.exe`. Keep the other files in `dist` beside the executable. The **Upscaling** menu offers 1×, 2×, and 4× and saves the selected value in `dist/userdata/settings.ini`.
 
-The **Aspect ratio** menu beside **Upscaling** offers Original (5:3), 16:9, and 21:9 for the upper screen. Its labels use the language selected with `-Language`. The choice is saved in `dist/userdata/settings.ini` as `aspect_ratio=0`, `1`, or `2`. **F7** cycles through the formats. The touchscreen keeps its original proportions in every format.
+The **Aspect ratio** menu offers Original (5:3), 16:9, and 21:9 for the upper screen. Its labels use the language selected with `-Language`. The choice is saved in `dist/userdata/settings.ini` as `aspect_ratio=0`, `1`, or `2`. **F7** cycles through the formats. The touchscreen keeps its original proportions in every format.
+
+In **Widescreen** (F9) at **16:9**, the game keeps a 16:9 content area in a restored window. If the maximized window's content area is slightly wider, the 3D view extends to both sides without hiding the title bar or menus. **F11** still toggles fullscreen manually.
 
 The 21:9 option is marked experimental because the expanded view can reveal scenery edges or objects outside the original camera view.
 
@@ -32,7 +34,7 @@ The game uses the original 400 × 240 top screen and 320 × 240 touchscreen. Ups
 
 The Vulkan renderer targets a 60 Hz refresh for the top screen and keeps the original 30 Hz game logic. It fills the extra refresh with a uniform pixel translation when the camera motion is consistent across the screen. Other movements and cuts use the original image. This can add one display refresh of latency.
 
-Connect a Windows-compatible gamepad and use the left stick to move. Controller mappings follow the positions of the 3DS buttons. On an Xbox controller, **A** jumps, **X** runs, and **Menu** pauses.
+Connect a gamepad and use the left stick to move. Controller mappings follow the positions of the 3DS buttons. On an Xbox controller, **A** jumps, **X** runs, and **Menu** pauses. Press **D-pad Up** in a course to use the reserve item in any screen layout.
 
 On first launch, decline StreetPass to play offline. The profile setup supplies a local Player Mii.
 

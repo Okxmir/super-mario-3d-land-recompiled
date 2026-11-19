@@ -18,6 +18,7 @@ def frontend(source):
     source = source.replace('#include <cstdio>', '#include <cstdio>\n#include <cmath>')
     source = source.replace('#include "settings.h"\n',
                             '#include "settings.h"\n#include "course_hud.h"\n#include "course_pause_menu.h"\n'
+                            '#include "course_touch.h"\n'
                             '#include "hd_texture_pack.h"\n')
     source = source.replace('int big = s.swap_screens ? 1 : 0, small = 1 - big;',
                             'int big = s.swap_screens && !s.widescreen_layout() ? 1 : 0, small = 1 - big;')
@@ -29,7 +30,25 @@ def frontend(source):
                             '                                     s.widescreen_layout() && !s.picture_in_picture);\n'
                             '        s.save();')
     source = source.replace('    SDL_Texture *shown_gpu[2] = {nullptr, nullptr};',
-                            '    SDL_Texture *shown_gpu[2] = {nullptr, nullptr};\n    CoursePauseMenu pause_menu;')
+                            '    SDL_Texture *shown_gpu[2] = {nullptr, nullptr};\n    CoursePauseMenu pause_menu;\n'
+                            '    sm3dl::ReserveTap reserve_tap;')
+    source = source.replace(
+        '            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:\n',
+        '            case SDL_EVENT_GAMEPAD_BUTTON_DOWN:\n'
+        '                reserve_tap.press(SDL_GamepadButton(e.gbutton.button), pica::course_reserve_ready(), SDL_GetTicks());\n')
+    source = source.replace(
+        '            current_input = in;',
+        '            reserve_tap.apply(in, pica::course_reserve_ready(), SDL_GetTicks());\n'
+        '            current_input = in;')
+    source = source.replace(
+        '            } else if (w == "log") {',
+        '''            } else if (w == "pad-up") {
+                LOG("control: reserve %s", pica::course_reserve_ready() ? "ready" : "blocked");
+                SDL_Event event{};
+                event.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+                event.gbutton.button = SDL_GAMEPAD_BUTTON_DPAD_UP;
+                SDL_PushEvent(&event);
+            } else if (w == "log") {''')
     source = source.replace('            if (layout.touch_at(lx, ly, tx, ty)) {',
                             '''            if (pause_menu.panel != pica::gpu::CoursePause::None &&
                     s.widescreen_layout() && !s.picture_in_picture
@@ -69,11 +88,16 @@ def frontend(source):
                     }
                 }
             }''')
+    source = source.replace('    float top_width = TOP_WIDTH;',
+                            '    float window_top_width = 0; // optional native width of a wider client area\n'
+                            '    float top_width = TOP_WIDTH;')
     source = source.replace(
         '        const float W[2] = {top_width, float(BOTTOM_WIDTH)}, H = float(SCREEN_HEIGHT);',
         '''        constexpr float top_widths[] = {float(TOP_WIDTH), SCREEN_HEIGHT * 16.0f / 9.0f,
                                         SCREEN_HEIGHT * 21.0f / 9.0f};
-        const float display_width = std::min(top_width, top_widths[std::clamp(s.aspect_ratio, 0, 2)]);
+        const float target_width = window_top_width > 0 ? window_top_width
+            : top_widths[std::clamp(s.aspect_ratio, 0, 2)];
+        const float display_width = std::min(top_width, target_width);
         const float W[2] = {display_width, float(BOTTOM_WIDTH)}, H = float(SCREEN_HEIGHT);''')
     source = source.replace(
         '        src[0] = {0, 0, W[0], H}, src[1] = {0, 0, W[1], H};',
@@ -88,9 +112,18 @@ def frontend(source):
         '                if (e.key.scancode == SDL_SCANCODE_F9) s.single_screen = !s.single_screen, relayout();\n', '')
     source = source.replace('#include "handoff.h"\n', '').replace('#include "launcher.h"\n', '')
     source = source.replace('#include "settings.h"\n',
-                            '#include "settings.h"\n#ifdef _WIN32\n#include "resolution_menu.h"\n#endif\n'
+                            '#include "settings.h"\n#include "presentation_window.h"\n'
+                            '#ifdef _WIN32\n#include "resolution_menu.h"\n#endif\n'
                             '#include "virtual_gamepad.h"\n')
     source = source.replace("Input input() {", """int verify_aspect_ratio() {
+    static_assert(sm3dl::is_16_by_9(1920, 1080) && sm3dl::is_16_by_9(2560, 1440));
+    static_assert(!sm3dl::is_16_by_9(1919, 988) && !sm3dl::is_16_by_9(3440, 1440));
+    constexpr auto fitted = sm3dl::fit_16_by_9(1919, 988);
+    static_assert(sm3dl::is_16_by_9(fitted.width, fitted.height) &&
+                  fitted.width <= 1919 && fitted.height <= 988);
+    static_assert(sm3dl::can_extend_16_by_9(1919, 988) &&
+                  !sm3dl::can_extend_16_by_9(1920, 1080) && !sm3dl::can_extend_16_by_9(3440, 1440));
+    static_assert(sm3dl::top_margin_for_client(1919, 988, 400, 240) == 34);
     auto &s = settings();
     const Settings previous = s;
     s.smart_layout = false;
@@ -188,9 +221,27 @@ int verify_gamepad() {
         SDL_UpdateJoysticks();
         int16_t x = 0, y = 0;
         const uint32_t buttons = gamepad_buttons(gamepad, x, y);
-        SDL_CloseGamepad(gamepad);
         if (buttons != (BTN_A | BTN_B | BTN_START) || x != CIRCLE_MAX || y != CIRCLE_MAX)
             fatal("3DS gamepad mapping mismatch: buttons %08x, stick %d/%d", buttons, x, y);
+        if (!device.button(SDL_GAMEPAD_BUTTON_DPAD_UP, true)) fatal("Cannot press D-pad Up");
+        SDL_PumpEvents();
+        SDL_Event event;
+        sm3dl::ReserveTap reserve;
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.which == device.instance())
+                reserve.press(SDL_GamepadButton(event.gbutton.button), true, 1000);
+        }
+        Input touch;
+        reserve.apply(touch, true, 1050);
+        if (!touch.touching || touch.touch_x != sm3dl::reserve_x || touch.touch_y != sm3dl::reserve_y)
+            fatal("D-pad Up did not tap the reserve slot");
+        touch = {};
+        reserve.apply(touch, true, 1110);
+        if (touch.touching) fatal("Reserve tap remained pressed");
+        reserve.press(SDL_GAMEPAD_BUTTON_DPAD_UP, false, 1200);
+        reserve.apply(touch, true, 1250);
+        if (touch.touching) fatal("Menu input triggered an item tap");
+        SDL_CloseGamepad(gamepad);
     }
     SDL_Quit();
     std::puts("SDL gamepad buttons and left stick reached the 3DS input mapping.");
@@ -237,16 +288,8 @@ Input input() {""")
         """                    s.fullscreen = !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN);
                     SDL_SetWindowFullscreen(window, s.fullscreen);
                     s.save();""",
-        """                    const bool fullscreen = !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN);
-#ifdef _WIN32
-                    if (fullscreen) resolution_menu.set_visible(false);
-#endif
-                    SDL_SetWindowFullscreen(window, fullscreen);
-                    s.fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
-#ifdef _WIN32
-                    resolution_menu.set_visible(!s.fullscreen);
-#endif
-                    s.save();""")
+        """                    set_fullscreen(!(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN));
+                    if (!s.fullscreen) first_layout = true, relayout();""")
     source = source.replace("    pica::set_resolution_scale(s.resolution);",
                             "    pica::set_resolution_scale(s.resolution);\n"
                             "    if (pica::gpu::active()) pica::gpu::set_hd_textures(s.hd_textures);\n"
@@ -260,6 +303,9 @@ Input input() {""")
     source = source.replace("                    s.widescreen = !s.widescreen;",
                             "                    s.aspect_ratio = (s.aspect_ratio + 1) % 3;\n"
                             "                    s.widescreen = s.aspect_ratio != 0;")
+    source = source.replace(
+        '                    pica::set_aspect_ratio(pica::gpu::active() ? s.aspect_ratio : 0);\n                    s.save();',
+        '                    relayout();')
     # This title draws both LCDs into 400-row targets. The generic HUD
     # heuristic treats parts of the lower LCD as top-screen overlays.
     source = source.replace("    pica::set_hud_scale(float(s.hud_size) / 100.0f);\n", "")
@@ -399,22 +445,93 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
         message_until = SDL_GetTicks() + 2500;
         redraw_requested = true;
     };""")
-    source = source.replace("    auto relayout = [&] {\n", "    auto relayout = [&] {\n        redraw_requested = true;\n")
+    source = source.replace("    auto relayout = [&] {\n", """    // Keep the window chrome. Widen the 3D camera to the wider client area
+    // instead of forcing fullscreen or scaling the 16:9 frame nonuniformly.
+    auto top_screen_16_by_9 = [&] {
+        return pica::gpu::active() && s.widescreen_layout() && s.aspect_ratio == 1;
+    };
+    bool restore_after_fullscreen = false;
+    auto set_fullscreen = [&](bool enabled) {
+        if (enabled) restore_after_fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_MAXIMIZED) != 0;
+#ifdef _WIN32
+        if (enabled) resolution_menu.set_visible(false);
+#endif
+        if (!SDL_SetWindowFullscreen(window, enabled)) LOG("window: fullscreen change failed: %s", SDL_GetError());
+        s.fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
+        if (!s.fullscreen && restore_after_fullscreen) {
+            restore_after_fullscreen = false;
+            SDL_RestoreWindow(window);
+        }
+#ifdef _WIN32
+        resolution_menu.set_visible(!s.fullscreen);
+#endif
+        redraw_requested = true;
+        s.save();
+    };
+    bool locked_16_by_9 = false;
+    auto relayout = [&] {
+        redraw_requested = true;
+        const bool lock_ratio = top_screen_16_by_9();
+        const bool changed_lock = lock_ratio != locked_16_by_9;
+        if (changed_lock) {
+            const float ratio = lock_ratio ? sm3dl::widescreen_aspect : 0.0f;
+            SDL_SetWindowAspectRatio(window, ratio, ratio);
+            locked_16_by_9 = lock_ratio;
+        }
+        const auto flags = SDL_GetWindowFlags(window);
+        int client_w = 0, client_h = 0;
+        const bool fill_window = lock_ratio && (flags & SDL_WINDOW_MAXIMIZED) && !(flags & SDL_WINDOW_FULLSCREEN) &&
+            SDL_GetRenderOutputSize(renderer, &client_w, &client_h) && sm3dl::can_extend_16_by_9(client_w, client_h);
+        layout.window_top_width = fill_window ? float(double(client_w) * SCREEN_HEIGHT / client_h) : 0;
+        if (fill_window)
+            pica::set_window_top_margin(sm3dl::top_margin_for_client(client_w, client_h, TOP_WIDTH, SCREEN_HEIGHT));
+        else
+            pica::set_aspect_ratio(pica::gpu::active() ? s.aspect_ratio : 0);
+""")
     source = source.replace("        float old_h = layout.h;", "        float old_w = layout.w, old_h = layout.h;")
     source = source.replace(
         "if (old_h != layout.h && !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN))",
-        "if ((first_layout || old_w != layout.w || old_h != layout.h) &&\n"
-        "            !(SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN))")
+        "if ((first_layout || changed_lock || old_w != layout.w || old_h != layout.h) &&\n"
+        "            !(SDL_GetWindowFlags(window) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED)))")
     source = source.replace(
         "SDL_SetWindowSize(window, ww, int(float(ww) * layout.h / layout.w));",
-        "SDL_SetWindowSize(window, ww, int(std::lround(float(ww) * layout.h / layout.w)));")
+        """if (lock_ratio) {
+                SDL_Rect usable{};
+                int top = 0, left = 0, bottom = 0, right = 0;
+                SDL_GetWindowBordersSize(window, &top, &left, &bottom, &right);
+                const bool have_bounds = SDL_GetDisplayUsableBounds(SDL_GetDisplayForWindow(window), &usable);
+                const auto size = sm3dl::fit_16_by_9(have_bounds ? std::min(ww, usable.w - left - right) : ww,
+                                                    have_bounds ? usable.h - top - bottom : ww);
+                SDL_SetWindowSize(window, size.width, size.height);
+            } else {
+                SDL_SetWindowSize(window, ww, int(std::lround(float(ww) * layout.h / layout.w)));
+            }""")
     source = source.replace("    };\n    relayout();", "        first_layout = false;\n    };\n    relayout();")
+    source = source.replace(
+        '''        SDL_SetRenderLogicalPresentation(renderer, int(std::lround(layout.w * 3)),
+                                         int(std::lround(layout.h * 3)), SDL_LOGICAL_PRESENTATION_LETTERBOX);
+        // Three canvas units per native pixel represent the 16:9 width exactly.
+        SDL_SetRenderScale(renderer, 3.0f, 3.0f);''',
+        '''        if (fill_window && layout.w == layout.window_top_width && layout.h == SCREEN_HEIGHT) {
+            // Match the drawable exactly, using one scale in both dimensions.
+            SDL_SetRenderLogicalPresentation(renderer, client_w, client_h, SDL_LOGICAL_PRESENTATION_LETTERBOX);
+            const float pixel_scale = float(client_h) / SCREEN_HEIGHT;
+            SDL_SetRenderScale(renderer, pixel_scale, pixel_scale);
+        } else {
+            SDL_SetRenderLogicalPresentation(renderer, int(std::lround(layout.w * 3)),
+                                             int(std::lround(layout.h * 3)), SDL_LOGICAL_PRESENTATION_LETTERBOX);
+            SDL_SetRenderScale(renderer, 3.0f, 3.0f);
+        }''')
     source = source.replace(
         "        while (SDL_PollEvent(&e)) {\n",
         """        while (SDL_PollEvent(&e)) {
 #ifdef _WIN32
             if (e.type == ResolutionMenu::layout_toggle_event()) {
                 s.toggle_screen_layout();
+                relayout();
+                continue;
+            }
+            if (e.type == ResolutionMenu::aspect_changed_event()) {
                 relayout();
                 continue;
             }
@@ -436,6 +553,16 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
                 continue;
             }
 #endif
+            if (top_screen_16_by_9() &&
+                (e.type == SDL_EVENT_WINDOW_MAXIMIZED || e.type == SDL_EVENT_WINDOW_RESIZED ||
+                 e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) &&
+                (SDL_GetWindowFlags(window) & SDL_WINDOW_MAXIMIZED))
+                relayout();
+            if ((e.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN || e.type == SDL_EVENT_WINDOW_RESTORED) &&
+                top_screen_16_by_9() && !(SDL_GetWindowFlags(window) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED))) {
+                first_layout = true;
+                relayout();
+            }
             if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F9) {
                 s.toggle_screen_layout();
                 relayout();
@@ -1062,7 +1189,7 @@ uint32_t batch_capacity(size_t size) {
 
 
 def course_hud_gpu(source):
-    source = source.replace('#include "gpu.h"', '#include "gpu.h"\n#include "course_hud.h"')
+    source = source.replace('#include "gpu.h"', '#include "gpu.h"\n#include "course_hud.h"\n#include "course_touch.h"')
     source = source.replace('    uint32_t first, count;\n',
                             '    uint32_t first, count;\n    unsigned hud_part = 0;\n'
                             '    bool pause_sprite = false, hide_pause_title = false;\n', 1)
@@ -1122,6 +1249,30 @@ std::vector<SDL_GPUTexture *> take_retired_scanouts() {''')
 
 
 def pica(source):
+    source = source.replace('#include "gpu/gpu.h"', '#include "gpu/gpu.h"\n#include "course_touch.h"')
+    source = source.replace(
+        'void emit_triangle(const Vertex &v0, const Vertex &v1, const Vertex &v2) {',
+        '''#include "course_touch_scan.inc"
+
+void emit_triangle(const Vertex &v0, const Vertex &v1, const Vertex &v2) {
+    if (course_touch_scan.tracking) {
+        course_touch_scan.add(v0);
+        course_touch_scan.add(v1);
+        course_touch_scan.add(v2);
+    }''')
+    source = source.replace(
+        'void draw(bool indexed) {',
+        'void draw(bool indexed) {\n    course_touch_scan.begin();')
+    source = source.replace(
+        '    count_draw(n && std::fabs(w - 1.0f) > 1e-4f);',
+        '    course_touch_scan.end();\n    count_draw(n && std::fabs(w - 1.0f) > 1e-4f);')
+    source = source.replace(
+        '        scene_published.bottom_draws = scene_building.bottom_draws;',
+        '        course_touch_scan.publish();\n        scene_published.bottom_draws = scene_building.bottom_draws;')
+    source = source.replace(
+        'SceneInfo scene_info() {',
+        'bool course_reserve_ready() { return course_touch_scan.ready.load(std::memory_order_relaxed); }\n\n'
+        'SceneInfo scene_info() {')
     source = source.replace(
         "    if (log_cfg::gpu) {\n        static const uint32_t stages[6]",
         """    if (log_cfg::gpu) {
@@ -1563,7 +1714,8 @@ def prepare(upstream, output):
         "SDL_GPUTexture *lcd_frame(", "std::vector<SDL_GPUTexture *> take_retired_scanouts();\nSDL_GPUTexture *lcd_frame("))
     edit(src / "video/pica.h", lambda source: source.replace(
         "uint32_t in_dims, uint32_t out_dims, uint32_t flags);",
-        "uint32_t in_dims, uint32_t out_dims, uint32_t flags, bool right_eye = false);"))
+        "uint32_t in_dims, uint32_t out_dims, uint32_t flags, bool right_eye = false);").replace(
+        "SceneInfo scene_info();", "SceneInfo scene_info();\nbool course_reserve_ready();"))
     edit(src / "frontend/games.h", lambda source: source.replace(
         'inline constexpr KnownDump KNOWN_DUMPS[] = {',
         'inline constexpr KnownDump KNOWN_DUMPS[] = {\n'
@@ -1611,13 +1763,15 @@ def prepare(upstream, output):
         '      << "aspect_ratio=" << aspect_ratio << "\\n"\n'
         '      << "widescreen=" << widescreen << "\\n"'))
     edit(src / "video/pica.h", lambda source: source.replace(
-        'void set_widescreen(bool on);', 'void set_aspect_ratio(int mode);\nvoid set_widescreen(bool on);'))
+        'void set_widescreen(bool on);',
+        'void set_aspect_ratio(int mode);\nvoid set_window_top_margin(int margin);\nvoid set_widescreen(bool on);'))
     edit(src / "video/widescreen.cpp", lambda source: source.replace(
         'void set_widescreen(bool on) { requested_margin = on ? 14 : 0; }',
         'void set_aspect_ratio(int mode) {\n'
         '    constexpr int margins[] = {0, 14, 80};\n'
         '    requested_margin = margins[std::clamp(mode, 0, 2)];\n'
-        '}\nvoid set_widescreen(bool on) { set_aspect_ratio(on ? 1 : 0); }'))
+        '}\nvoid set_window_top_margin(int margin) { requested_margin = std::clamp(margin, 14, 80); }\n'
+        'void set_widescreen(bool on) { set_aspect_ratio(on ? 1 : 0); }'))
     edit(src / "hle/cfg.cpp", lambda source: source.replace(
         '    default: return 110; // United Kingdom',
         '    case 8: return 94;  // Netherlands\n'

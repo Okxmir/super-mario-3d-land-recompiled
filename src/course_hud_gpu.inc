@@ -4,13 +4,12 @@ namespace {
 
 constexpr int hud_target_w = COURSE_HUD_HEIGHT * COURSE_HUD_SCALE;
 constexpr int hud_target_h = COURSE_HUD_WIDTH * COURSE_HUD_SCALE;
-constexpr auto hud_lives = 1u;
-constexpr auto hud_reserve = 2u;
-constexpr auto hud_medals = 4u;
-constexpr auto hud_level = 8u;
-constexpr auto hud_reserve_caption = 16u;
-constexpr auto course_parts = hud_lives | hud_reserve | hud_medals | hud_level;
-constexpr int reserve_center_x = 160, reserve_center_y = 131;
+constexpr auto hud_lives = sm3dl::course_lives;
+constexpr auto hud_reserve = sm3dl::course_reserve;
+constexpr auto hud_level = sm3dl::course_level;
+constexpr auto hud_reserve_caption = sm3dl::reserve_caption;
+constexpr auto course_parts = sm3dl::course_hud_parts;
+constexpr int reserve_center_x = sm3dl::reserve_x, reserve_center_y = sm3dl::reserve_y;
 constexpr int hud_reserve_x = 111;
 constexpr float hud_reserve_scale = 0.21f;
 
@@ -72,24 +71,20 @@ unsigned course_hud_part(DrawRec &d, uint32_t dims, uint32_t blend) {
         d.viewport.h != frontend::BOTTOM_WIDTH * d.color->scale || blend != 0x76760000)
         return 0;
 
-    float left = 320, right = 0, top = 240, bottom = 0;
+    sm3dl::CourseHudBounds bounds;
     for (uint32_t i = d.first; i < d.first + d.count; ++i) {
         const auto &p = vertices[i].pos;
         if (p[3] <= 0) return 0;
-        // The two axes of the guest framebuffer are rotated relative to the LCD.
-        const float x = (1 - p[1] / p[3]) * 160;
-        const float y = (1 - p[0] / p[3]) * 120;
-        left = std::min(left, x), right = std::max(right, x);
-        top = std::min(top, y), bottom = std::max(bottom, y);
+        bounds.add(p[0], p[1], p[3]);
     }
+    const auto [left, right, top, bottom] = bounds;
 
     const float center = (top + bottom) / 2;
     unsigned row = 0;
     if (center >= 68 && center <= 90) row = 1;
     if (center >= 125 && center <= 147) row = 2;
     if (center >= 182 && center <= 205) row = 4;
-    if (pause_button && left >= 8 && left <= 45 && right >= 275 && right <= 312 &&
-        bottom - top >= 50 && bottom - top <= 68 && row) {
+    if (pause_button && bounds.pause_row()) {
         // Each pause option uses the same idle and pressed textures.
         // Identify the complete panel regardless of the language or HD replacement.
         const auto hash = pause_texture_hash();
@@ -116,18 +111,7 @@ unsigned course_hud_part(DrawRec &d, uint32_t dims, uint32_t blend) {
         d.pause_sprite = true;
     if (!hud || d.count > 48 || d.pause_sprite) return 0;
 
-    if (top >= 0 && bottom <= 43) {
-        // The two text atlases have different sizes. The level label is on
-        // the left of the touchscreen, and the lives are on the right.
-        if (left >= 0 && right <= 105 && width == 128 && height == 128) return hud_level;
-        if (left >= 211 && right <= 320 && width == 32 && height == 256) return hud_lives;
-        if (left >= 105 && right <= 213 && bottom - top >= 19) return hud_medals;
-    }
-    if (width == 128 && height == 128 && left >= 105 && right <= 215 && top >= 110 && bottom <= 144)
-        return hud_reserve | hud_reserve_caption;
-    if (left >= 78 && right <= 242 && top >= 49 && bottom <= 215)
-        return hud_reserve;
-    return 0;
+    return bounds.hud_part(width, height);
 }
 
 void append_hud_vertices(const DrawRec &d) {

@@ -104,6 +104,11 @@ public:
         return type;
     }
 
+    static Uint32 aspect_changed_event() {
+        static const Uint32 type = SDL_RegisterEvents(1);
+        return type;
+    }
+
 private:
     static constexpr UINT_PTR subclass_id = 1;
     static constexpr UINT first_command = 0x5100;
@@ -351,9 +356,12 @@ private:
                 if (command != first_aspect && !pica::gpu::active()) return 0;
                 menu.settings_.aspect_ratio = int(command - first_aspect);
                 menu.settings_.widescreen = menu.settings_.aspect_ratio != 0;
-                pica::set_aspect_ratio(menu.settings_.aspect_ratio);
                 menu.settings_.save();
                 menu.update_checks();
+                SDL_Event action{};
+                action.type = aspect_changed_event();
+                if (!action.type || !SDL_PushEvent(&action))
+                    LOG("window: could not apply the new window aspect ratio: %s", SDL_GetError());
                 LOG("graphics: aspect ratio set to %d", menu.settings_.aspect_ratio);
                 return 0;
             }
