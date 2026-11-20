@@ -743,6 +743,27 @@ def filesystem(source):
 
 def gpu(source):
     source = source.replace(
+        between(source, "    // cull (mode 1 keeps clockwise", "    for (int i = 0; i < 3; i++) {\n        const float *a = v[i]->a;"),
+        """    // Cull according to the winding of the visible part of the triangle.
+    if (cur_cull == 1 || cur_cull == 2) {
+        float w0 = v0.a[POS + 3], w1 = v1.a[POS + 3], w2 = v2.a[POS + 3];
+        if (w0 > 0 && w1 > 0 && w2 > 0) {
+            float x0 = v0.a[POS] / w0, y0 = v0.a[POS + 1] / w0, x1 = v1.a[POS] / w1, y1 = v1.a[POS + 1] / w1;
+            float x2 = v2.a[POS] / w2, y2 = v2.a[POS + 1] / w2;
+            float area = (x1 - x0) * (y2 - y0) - (y1 - y0) * (x2 - x0);
+            if ((cur_cull == 1 && area >= 0) || (cur_cull == 2 && area <= 0)) return;
+        } else {
+            // Clipping to positive w preserves the sign of this homogeneous determinant.
+            // Dividing by w here would misclassify triangles crossing the camera plane.
+            // Submitting them to both cull passes breaks stencil shadows (e.g. W6-3).
+            const double x0 = v0.a[POS], x1 = v1.a[POS], x2 = v2.a[POS];
+            const double y0 = v0.a[POS + 1], y1 = v1.a[POS + 1], y2 = v2.a[POS + 1];
+            const double area = x0 * (y1 * w2 - y2 * w1) - y0 * (x1 * w2 - x2 * w1) + w0 * (x1 * y2 - x2 * y1);
+            if ((cur_cull == 1 && area >= 0) || (cur_cull == 2 && area <= 0)) return;
+        }
+    }
+""")
+    source = source.replace(
         "    k.color_mask = regs[COLOR_WRITE_ALLOW] ? uint8_t((dm >> 8) & 0xF) : 0;",
         """    // PICA logic op 6 keeps the destination while depth and stencil still run.
     const bool preserve_color = !k.blend && (regs[LOGIC_OP] & 0xF) == 6;
