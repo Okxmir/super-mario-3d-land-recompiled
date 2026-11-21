@@ -5,7 +5,7 @@ An experimental native Windows x64 and Linux x86-64 port of Super Mario 3D Land.
 ## Current features
 
 - Native Windows x64 and Linux x86-64 executables built from the supported European ROM.
-- Original 30 Hz gameplay and 30 FPS rendering, without frame interpolation.
+- Original 30 Hz gameplay, with Vulkan frame interpolation targeting 60 FPS on the upper screen.
 - 1×, 2×, and 4× upscaling with a saved selection. Use the **Upscaling** menu on Windows or **F4** on Linux.
 - Optional [1080p texture pack by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd). The graphical builders download and install it during the build when **Install HD textures** is checked. The option starts checked. With Vulkan, click **HD** on Windows or use **Ctrl+F10** on Linux to switch textures while playing.
 - Original (5:3), 16:9, and experimental 21:9 aspect ratios. Use **F7** or the localized **Aspect ratio** menu on Windows. The selected format is saved between launches.
@@ -50,7 +50,7 @@ For the graphical builder, run `bash SuperMario3DLandBuilder`. It creates the ga
 
 ## Display
 
-Use the Windows **Upscaling** menu or **F4** on Linux to select 1×, 2×, or 4×. The game uses its original 30 Hz logic and renders original frames at 30 FPS without interpolation. No launch option is needed.
+Use the Windows **Upscaling** menu or **F4** on Linux to select 1×, 2×, or 4×. The game keeps its original 30 Hz timing for physics, objects and the countdown. Vulkan adds intermediate display frames automatically when camera motion can be matched safely. A cut or inconsistent motion can repeat an original frame instead. This targets 60 FPS on the upper screen; it does not make the simulation, each object, or the touchscreen run at 60 Hz. Actual output depends on the scene and the PC. Software rendering uses the original frames.
 
 With Vulkan, wider formats expand the 3D view and **F7** cycles through the three formats. The Windows **Aspect ratio** menu selects the same formats. The lower touchscreen keeps its original 4:3 proportions. The fallback renderer uses the original format.
 

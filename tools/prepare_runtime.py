@@ -1001,7 +1001,7 @@ void submit_commands(SDL_GPUCommandBuffer *cmd) {
         "    if (interp_this) for (auto &l : surface_loads) reloaded.push_back(l.surface);",
     )
     source = reuse_upload_buffer(source)
-    return hd_texture_gpu(course_hud_gpu(land_lcd(source)))
+    return hd_texture_gpu(course_hud_gpu(lcd_smoothing(land_lcd(source))))
 
 
 def hd_texture_gpu(source):
@@ -1073,6 +1073,62 @@ void begin_list() {
         hd_pack_enabled = hd;
         LOG("HD textures: %s", hd ? "on" : "off");
     }''')
+    return source
+
+
+def lcd_smoothing(source):
+    source = source.replace('#include "sm3dl_lcd.inc"',
+                            '#include "sm3dl_lcd.inc"\n#include "sm3dl_estimate.inc"\n'
+                            '#include "sm3dl_screen_motion.inc"\n#include "sm3dl_interpolate.inc"')
+    source = source.replace("std::vector<SDL_GPUTexture *> retired_scanouts;",
+                            'std::vector<SDL_GPUTexture *> retired_scanouts;\n#include "lcd_smoothing.h"\nLcdSmoother smoother;')
+    source = source.replace(between(source, "SDL_GPUTexture *top_frame(", "std::vector<SDL_GPUTexture *> take_retired_scanouts()"),
+                            """SDL_GPUTexture *top_frame(uint32_t address, int *width, int *height, bool *interpolated) {
+    if (!ok) return nullptr;
+    SDL_LockMutex(lcd_lock);
+    auto it = lcd.find(address);
+    SDL_GPUTexture *frame = nullptr;
+    if (it != lcd.end() && it->second.latest >= 0) {
+        frame = it->second.tex[it->second.latest];
+        *width = it->second.w;
+        *height = it->second.h;
+    }
+    const uint64_t tick = vblanks.load();
+    if (!frame) {
+        smoother.previous = nullptr;
+        smoother.original_pending = false;
+    } else if (smoother.previous != frame || smoother.previous_address != address) {
+        auto last = lcd.find(smoother.previous_address);
+        const uint64_t gap = tick - smoother.previous_tick;
+        const bool same_size = last != lcd.end() && last->second.w == *width && last->second.h == *height;
+        const bool previous_valid = same_size && last->second.latest >= 0 &&
+                                    last->second.tex[last->second.latest] == smoother.previous;
+        auto *previous = smoother.previous;
+        const bool pending = smoother.original_pending;
+        smoother.previous = frame;
+        smoother.previous_address = address;
+        smoother.previous_tick = tick;
+        smoother.original_pending = false;
+        if (previous_valid && pending && gap == 1) {
+            frame = previous;
+            smoother.original_pending = true;
+        // Only fill a missing refresh when the game provides a new 30 Hz frame.
+        // A cut or stall must never accumulate extra latency.
+        } else if (previous_valid && previous && gap >= 2 && gap <= 3) {
+            if (auto *mid = smoother.render(previous, frame, *width, *height)) {
+                frame = mid;
+                *interpolated = true;
+                smoother.original_pending = true;
+            }
+        }
+    } else {
+        smoother.original_pending = false;
+    }
+    SDL_UnlockMutex(lcd_lock);
+    return frame;
+}
+
+""")
     return source
 
 
@@ -1709,6 +1765,7 @@ def prepare(upstream, output):
         "#include <cstdint>", "#include <cstdint>\n#include <vector>").replace(
         "uint32_t out_w, uint32_t out_h,\n                      uint32_t flags);",
         "uint32_t out_w, uint32_t out_h,\n                      uint32_t flags, bool right_eye);").replace(
+        "top_frame(int *width, int *height)", "top_frame(uint32_t address, int *width, int *height, bool *interpolated)").replace(
         "SDL_GPUTexture *lcd_frame(", "std::vector<SDL_GPUTexture *> take_retired_scanouts();\nSDL_GPUTexture *lcd_frame("))
     edit(src / "video/pica.h", lambda source: source.replace(
         "uint32_t in_dims, uint32_t out_dims, uint32_t flags);",
@@ -1814,7 +1871,16 @@ def prepare(upstream, output):
 #endif""").replace(
         """            SDL_GPUTexture *frame = screen == 0 ? pica::gpu::top_frame(&gw, &gh) : nullptr;
             if (!frame) frame = pica::gpu::lcd_frame(lcd[screen].addr, &gw, &gh);""",
-        "            SDL_GPUTexture *frame = pica::gpu::lcd_frame(lcd[screen].addr, &gw, &gh);").replace(
+        """            bool interpolated = false;
+            SDL_GPUTexture *frame = screen == 0 ? pica::gpu::top_frame(lcd[0].addr, &gw, &gh, &interpolated)
+                                               : pica::gpu::lcd_frame(lcd[screen].addr, &gw, &gh);
+            if (screen == 0 && frame != previous_top_frame) {
+                previous_top_frame = frame;
+                if (frame) {
+                    ++top_updates;
+                    if (interpolated) ++interpolated_slots;
+                }
+            }""").replace(
         "        lcd[screen] = {info[1], info[3], info[4]};",
         """        if (screen == 0) {
             auto remember = [](auto &history, uint32_t address) {
@@ -1855,13 +1921,20 @@ def prepare(upstream, output):
         "            if ((c[3] >> 16) == 400) frames_rendered++;\n", "").replace(
         "    uint32_t frames_rendered = 0; // display transfers to the top screen, for YW2_FPS",
         "    uint32_t frames_rendered = 0; // new top-screen buffers for SM3DL_FPS\n"
+        "    SDL_GPUTexture *previous_top_frame = nullptr;\n"
+        "    uint32_t top_updates = 0, interpolated_slots = 0;\n"
         "    std::chrono::steady_clock::time_point fps_since = std::chrono::steady_clock::now();").replace(
         "            pica::SceneInfo si = pica::scene_info();",
         "            const auto now = std::chrono::steady_clock::now();\n"
         "            const double seconds = std::chrono::duration<double>(now - fps_since).count();\n"
         "            fps_since = now;\n"
         "            pica::SceneInfo si = pica::scene_info();").replace(
-        "frames_rendered / 5.0", "frames_rendered / seconds"))
+        "frames_rendered / 5.0", "frames_rendered / seconds").replace(
+        "            frames_rendered = 0;",
+        """            if (top_updates)
+                LOG("graphics: %.1f top LCD updates/s (%.1f original + %.1f interpolation slots)",
+                    top_updates / seconds, (top_updates - interpolated_slots) / seconds, interpolated_slots / seconds);
+            frames_rendered = top_updates = interpolated_slots = 0;"""))
     edit(src / "video/color.h", lambda source: source.replace(
         "inline uint32_t fb_bpp(uint32_t format)",
         """// The PICA render-target register swaps the two 16-bit format IDs used by GX and LCD.

@@ -122,4 +122,18 @@ add_custom_command(OUTPUT "${LCD_HEADER}"
     DEPENDS tools/compile_lcd.py src/lcd_blit.hlsl "${DXC}"
     VERBATIM)
 target_sources(SuperMario3DLand PRIVATE "${LCD_HEADER}")
+foreach(entry estimate screen_motion interpolate)
+    set(profile ps_6_0)
+    if(entry STREQUAL "screen_motion")
+        set(profile vs_6_0)
+    endif()
+    set(header "${CMAKE_CURRENT_BINARY_DIR}/sm3dl_${entry}.inc")
+    add_custom_command(OUTPUT "${header}"
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_lcd.py"
+                "${DXC}" "${CMAKE_CURRENT_SOURCE_DIR}/src/lcd_interpolation.hlsl" "${header}"
+                --entry "${entry}" --symbol "sm3dl_${entry}" --profile "${profile}"
+        DEPENDS tools/compile_lcd.py src/lcd_interpolation.hlsl "${DXC}"
+        VERBATIM)
+    target_sources(SuperMario3DLand PRIVATE "${header}")
+endforeach()
 target_include_directories(SuperMario3DLand PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")

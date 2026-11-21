@@ -32,7 +32,7 @@ To use an installed toolchain, omit `-Portable`. This path requires 64-bit Pytho
 
 The game uses the original 400 × 240 top screen and 320 × 240 touchscreen. Upscaling multiplies each screen's width and height by the same factor.
 
-The game runs with its original 30 Hz logic and 30 FPS rendering, without frame interpolation. In 16:9 Widescreen, **F11** fills a 16:9 display without stretching the image or keeping the wider crop used for the maximized window.
+The game runs at its original 30 Hz logic. Vulkan interpolates the upper screen to target 60 FPS, without changing gameplay speed. If motion cannot be matched safely, the renderer may repeat a frame. In 16:9 Widescreen, **F11** fills a 16:9 display without stretching the image or keeping the wider crop used for the maximized window.
 
 Connect a gamepad and use the left stick to move. Controller mappings follow the positions of the 3DS buttons. On an Xbox controller, **A** jumps, **X** runs, and **Menu** pauses. Press **D-pad Up** in a course to use the reserve item in any screen layout.
 

@@ -261,7 +261,7 @@ int run_game(int argc, Char **argv) {
     }
     log_cfg::init();
     if (verify) return verify_native_startup(utf8_path(argv[2]).c_str());
-    LOG("timing: original 30 Hz game logic; no frame interpolation");
+    LOG("timing: original 30 Hz game logic");
     if (!std::getenv("SM3DL_NO_DIALOG")) {
         fatal_hook = [](const char *message) {
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Super Mario 3D Land", message, nullptr);
