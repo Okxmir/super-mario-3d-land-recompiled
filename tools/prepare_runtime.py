@@ -1716,6 +1716,56 @@ def applets(source):
         case 0x004B:""")
 
 
+def native_timing_replace(source, anchor, replacement):
+    if source.count(anchor) != 1:
+        raise ValueError(f"Missing or ambiguous native timing anchor: {anchor.strip()}")
+    return source.replace(anchor, replacement)
+
+
+def native_course_gsp(source):
+    return '#include "logic60.h"\n' + native_timing_replace(
+        source, '            pica::gpu::vblank();\n            apply_swaps();',
+        '''            logic60::vblank(pica::gpu::active());
+            pica::gpu::vblank();
+            const auto old_top = lcd[0].addr;
+            apply_swaps();
+            if (logic60::requested())
+                logic60::presented(old_top != lcd[0].addr, pica::gpu::lcd_frame_sequence(lcd[0].addr));''')
+
+
+def native_course_gpu(source):
+    source = '#include "logic60.h"\n' + source
+    source = native_timing_replace(source, '    uint32_t scanout_bytes = 0;',
+                                   '    uint32_t scanout_bytes = 0;\n    uint64_t native_sequence = 0;')
+    source = native_timing_replace(source, 'SDL_Mutex *lcd_lock;',
+                                   'SDL_Mutex *lcd_lock;\nuint64_t native_scanout_serial = 0; // under lcd_lock')
+    source = native_timing_replace(source, '    f.latest = slot;', '''    f.latest = slot;
+    if (top && logic60::requested()) f.native_sequence = ++native_scanout_serial;''')
+    source = native_timing_replace(source, 'SDL_GPUTexture *lcd_frame(uint32_t addr, int *width, int *height) {',
+                                   '''uint64_t lcd_frame_sequence(uint32_t addr) {
+    if (!ok || !addr) return 0;
+    SDL_LockMutex(lcd_lock);
+    const auto it = lcd.find(addr);
+    const uint64_t sequence = it == lcd.end() ? 0 : it->second.native_sequence;
+    SDL_UnlockMutex(lcd_lock);
+    return sequence;
+}
+
+SDL_GPUTexture *lcd_frame(uint32_t addr, int *width, int *height) {''')
+    source = native_timing_replace(source, '    bool want = interp_wanted.load();',
+                                   '    bool want = interp_wanted.load() && !logic60::active();')
+    return native_timing_replace(source, '    const uint64_t tick = vblanks.load();\n    if (!frame) {', '''    // Native simulation already supplies the frames: no synthetic frame or queue delay.
+    if (logic60::active()) {
+        smoother.previous = nullptr;
+        smoother.original_pending = false;
+        *interpolated = false;
+        SDL_UnlockMutex(lcd_lock);
+        return frame;
+    }
+    const uint64_t tick = vblanks.load();
+    if (!frame) {''')
+
+
 def prepare(upstream, output):
     for directory in ("src", "include"):
         shutil.copytree(upstream / directory, output / directory, dirs_exist_ok=True)
@@ -1732,7 +1782,8 @@ def prepare(upstream, output):
         "uint32_t out_w, uint32_t out_h,\n                      uint32_t flags);",
         "uint32_t out_w, uint32_t out_h,\n                      uint32_t flags, bool right_eye);").replace(
         "top_frame(int *width, int *height)", "top_frame(uint32_t address, int *width, int *height, bool *interpolated)").replace(
-        "SDL_GPUTexture *lcd_frame(", "std::vector<SDL_GPUTexture *> take_retired_scanouts();\nSDL_GPUTexture *lcd_frame("))
+        "SDL_GPUTexture *lcd_frame(", "std::vector<SDL_GPUTexture *> take_retired_scanouts();\n"
+        "uint64_t lcd_frame_sequence(uint32_t addr);\nSDL_GPUTexture *lcd_frame("))
     edit(src / "video/pica.h", lambda source: source.replace(
         "uint32_t in_dims, uint32_t out_dims, uint32_t flags);",
         "uint32_t in_dims, uint32_t out_dims, uint32_t flags, bool right_eye = false);").replace(
@@ -1912,7 +1963,8 @@ inline uint32_t render_target_format(uint32_t reg) {
 }
 
 inline uint32_t fb_bpp(uint32_t format)"""))
-    edit(src / "video/gpu/gpu.cpp", gpu)
+    edit(src / "hle/gsp.cpp", native_course_gsp)
+    edit(src / "video/gpu/gpu.cpp", lambda source: native_course_gpu(gpu(source)))
     edit(src / "video/pica.cpp", lambda source: vertex_workers(pica(source)))
     edit(src / "video/raster.cpp", lambda source: source.replace(
         "cur.color_format = (regs[COLOR_FORMAT] >> 16) & 7;",

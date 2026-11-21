@@ -66,6 +66,8 @@ For the graphical builder, run `bash SuperMario3DLandBuilder` from the project o
 
 Each build uses up to four parallel compile jobs by default. Set `CMAKE_BUILD_PARALLEL_LEVEL=2` if you need to reduce compiler memory use. **F4** cycles through the upscaling options with Vulkan, **F7** switches aspect ratios, and **F9** switches the upper-screen layout.
 
+The standard build enables experimental native 60 Hz course logic with Vulkan. No additional build or launch command is needed. Launch with `--original-30hz` to restore the original logic for that run. See [Display](README.md#display) for Windows and Linux launch examples and current limitations.
+
 ## Optional HD textures
 
 The graphical Windows and Linux builders download and install the [1080p texture pack by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd) when **Install HD textures (1080p, 107 MB)** is checked. The box starts checked. Clear it to build without the download. If the download fails, the builder finishes with the original textures and shows a message.

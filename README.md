@@ -5,7 +5,7 @@ An experimental native Windows x64 and Linux x86-64 port of Super Mario 3D Land.
 ## Current features
 
 - Native Windows x64 and Linux x86-64 executables built from the supported European ROM.
-- Vulkan rendering with a 60 Hz presentation target and camera-motion smoothing, while preserving the original 30 Hz game logic. Performance depends on the PC and the scene.
+- Experimental **native 60 Hz course logic** is enabled by default with Vulkan. Retimed movement, collision, camera and object states use smaller steps to preserve their original speed. Other states and cutscenes retain their original timing. Not every course or interaction is verified yet. Use `--original-30hz` to restore the previous mode.
 - 1×, 2×, and 4× upscaling with a saved selection. Use the **Upscaling** menu on Windows or **F4** on Linux.
 - Optional [1080p texture pack by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd). The graphical builders download and install it during the build when **Install HD textures** is checked. The option starts checked. With Vulkan, click **HD** on Windows or use **Ctrl+F10** on Linux to switch textures while playing.
 - Original (5:3), 16:9, and experimental 21:9 aspect ratios. Use **F7** or the localized **Aspect ratio** menu on Windows. The selected format is saved between launches.
@@ -50,7 +50,19 @@ For the graphical builder, run `bash SuperMario3DLandBuilder`. It creates the ga
 
 ## Display
 
-Use the Windows **Upscaling** menu or **F4** on Linux to select 1×, 2×, or 4×. Vulkan targets a 60 Hz refresh while keeping the original 30 Hz game logic. A refresh can repeat the original image when camera motion cannot be matched reliably.
+Use the Windows **Upscaling** menu or **F4** on Linux to select 1×, 2×, or 4×. Vulkan enables the experimental native course logic by default. The game does not interpolate frames while native 60 Hz logic is running. Original-rate sections may still use camera-motion smoothing.
+
+To use the original 30 Hz logic with the previous Vulkan presentation mode, run the built executable with `--original-30hz`. From the project folder:
+
+```bat
+dist\SuperMario3DLandRecompiled.exe --original-30hz
+```
+
+```bash
+./dist/linux-x64/SuperMario3DLandRecompiled --original-30hz
+```
+
+The option applies to that launch only. Native 60 Hz logic needs Vulkan; the fallback renderer uses the original game cadence. Some object states (including the small bird's flight and Bob-omb walking) still run at 30 Hz in the experimental mode. Performance depends on the scene and PC, and timing is not yet verified throughout the game.
 
 With Vulkan, wider formats expand the 3D view and **F7** cycles through the three formats. The Windows **Aspect ratio** menu selects the same formats. The lower touchscreen keeps its original 4:3 proportions. The fallback renderer uses the original format.
 
