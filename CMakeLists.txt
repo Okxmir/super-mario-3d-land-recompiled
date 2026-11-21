@@ -51,28 +51,16 @@ file(GLOB TRANSLATED_CODE CONFIGURE_DEPENDS "${GENERATED}/*.c")
 if(NOT TRANSLATED_CODE)
     message(FATAL_ERROR "Prepare the game with build.cmd on Windows or build.sh on Linux")
 endif()
-# Retiming is specific to the supported European executable. Keep the
-# recompiler's output untouched and require each hook's exact anchor.
-foreach(unit 0011 0013 0014 0015 0017 0018 0019 001a 001e 0021 0025 0026 002a 0030 0031 0032 0034 0035 0036)
-    set(original "${GENERATED}/recomp_${unit}.c")
-    set(retimed "${CMAKE_CURRENT_BINARY_DIR}/guest60/recomp_${unit}.c")
-    add_custom_command(OUTPUT "${retimed}"
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/logic60_patch.py" "${original}" "${retimed}"
-        DEPENDS "${original}" tools/logic60_patch.py
-        VERBATIM)
-    list(REMOVE_ITEM TRANSLATED_CODE "${original}")
-    list(APPEND TRANSLATED_CODE "${retimed}")
-endforeach()
 add_library(game_code OBJECT ${TRANSLATED_CODE})
 target_include_directories(game_code PRIVATE "${RUNTIME}/include" "${GENERATED}")
 target_compile_definitions(game_code PRIVATE RECOMP_TRACE_CALLS)
 option(SM3DL_FAST_BUILD "Disable optimization for shorter iteration builds" ON)
 if(MSVC)
     target_compile_options(game_code PRIVATE /bigobj /fp:precise /w
-        $<IF:$<BOOL:${SM3DL_FAST_BUILD}>,/Od,/O2>)
+        $<IF:$<BOOL:${SM3DL_FAST_BUILD}>,/Od,/O1>)
 else()
     target_compile_options(game_code PRIVATE -ffp-contract=off -fwrapv -w
-        $<IF:$<BOOL:${SM3DL_FAST_BUILD}>,-O0,-O2>)
+        $<IF:$<BOOL:${SM3DL_FAST_BUILD}>,-O0,-O1>)
 endif()
 
 set(RUNTIME_FILES
@@ -90,8 +78,7 @@ set(RUNTIME_FILES
 list(TRANSFORM RUNTIME_FILES PREPEND "${RUNTIME}/src/")
 
 add_executable(SuperMario3DLand src/main.cpp src/shared_font.cpp src/save_storage.cpp src/pica_shader_jit.cpp
-    src/cecd.cpp src/microphone.cpp src/local_mii.cpp src/apt_wrap.cpp src/hd_texture_pack.cpp src/cityhash64.cpp
-    src/logic60.cpp ${RUNTIME_FILES})
+    src/cecd.cpp src/microphone.cpp src/local_mii.cpp src/apt_wrap.cpp src/hd_texture_pack.cpp src/cityhash64.cpp ${RUNTIME_FILES})
 set_target_properties(SuperMario3DLand PROPERTIES OUTPUT_NAME SuperMario3DLandRecompiled)
 target_include_directories(SuperMario3DLand PRIVATE "${RUNTIME}/include" "${RUNTIME}/src" src "${UPSTREAM}/xbyak-df112862583c2d327c1d9782fd28f53aa675f11d")
 target_link_libraries(SuperMario3DLand PRIVATE game_code SDL3::SDL3)
@@ -135,18 +122,4 @@ add_custom_command(OUTPUT "${LCD_HEADER}"
     DEPENDS tools/compile_lcd.py src/lcd_blit.hlsl "${DXC}"
     VERBATIM)
 target_sources(SuperMario3DLand PRIVATE "${LCD_HEADER}")
-foreach(entry estimate screen_motion interpolate)
-    set(profile ps_6_0)
-    if(entry STREQUAL "screen_motion")
-        set(profile vs_6_0)
-    endif()
-    set(header "${CMAKE_CURRENT_BINARY_DIR}/sm3dl_${entry}.inc")
-    add_custom_command(OUTPUT "${header}"
-        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/compile_lcd.py"
-                "${DXC}" "${CMAKE_CURRENT_SOURCE_DIR}/src/lcd_interpolation.hlsl" "${header}"
-                --entry "${entry}" --symbol "sm3dl_${entry}" --profile "${profile}"
-        DEPENDS tools/compile_lcd.py src/lcd_interpolation.hlsl "${DXC}"
-        VERBATIM)
-    target_sources(SuperMario3DLand PRIVATE "${header}")
-endforeach()
 target_include_directories(SuperMario3DLand PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")

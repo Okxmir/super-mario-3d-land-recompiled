@@ -48,6 +48,14 @@ def frontend(source):
                 event.type = SDL_EVENT_GAMEPAD_BUTTON_DOWN;
                 event.gbutton.button = SDL_GAMEPAD_BUTTON_DPAD_UP;
                 SDL_PushEvent(&event);
+            } else if (w == "maximize") {
+                if (auto *window = SDL_GetRenderWindow(renderer)) SDL_MaximizeWindow(window);
+            } else if (w == "fullscreen") {
+                SDL_Event event{};
+                event.type = SDL_EVENT_KEY_DOWN;
+                event.key.scancode = SDL_SCANCODE_F11;
+                if (auto *window = SDL_GetRenderWindow(renderer)) event.key.windowID = SDL_GetWindowID(window);
+                SDL_PushEvent(&event);
             } else if (w == "log") {''')
     source = source.replace('            if (layout.touch_at(lx, ly, tx, ty)) {',
                             '''            if (pause_menu.panel != pica::gpu::CoursePause::None &&
@@ -124,6 +132,10 @@ def frontend(source):
     static_assert(sm3dl::can_extend_16_by_9(1919, 988) &&
                   !sm3dl::can_extend_16_by_9(1920, 1080) && !sm3dl::can_extend_16_by_9(3440, 1440));
     static_assert(sm3dl::top_margin_for_client(1919, 988, 400, 240) == 34);
+    static_assert(sm3dl::extend_maximized_16_by_9(false, true, 1919, 988));
+    static_assert(!sm3dl::extend_maximized_16_by_9(true, true, 1919, 988) &&
+                  !sm3dl::extend_maximized_16_by_9(true, true, 1920, 1080) &&
+                  !sm3dl::extend_maximized_16_by_9(false, false, 1919, 988));
     auto &s = settings();
     const Settings previous = s;
     s.smart_layout = false;
@@ -450,17 +462,30 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
     auto top_screen_16_by_9 = [&] {
         return pica::gpu::active() && s.widescreen_layout() && s.aspect_ratio == 1;
     };
+    bool locked_16_by_9 = false;
     bool restore_after_fullscreen = false;
     auto set_fullscreen = [&](bool enabled) {
-        if (enabled) restore_after_fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_MAXIMIZED) != 0;
+        if (enabled) {
+            restore_after_fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_MAXIMIZED) != 0;
+            if (locked_16_by_9) {
+                // The window's aspect constraint must not govern the fullscreen drawable.
+                SDL_SetWindowAspectRatio(window, 0.0f, 0.0f);
+                locked_16_by_9 = false;
+            }
+        }
 #ifdef _WIN32
         if (enabled) resolution_menu.set_visible(false);
 #endif
-        if (!SDL_SetWindowFullscreen(window, enabled)) LOG("window: fullscreen change failed: %s", SDL_GetError());
+        if (SDL_SetWindowFullscreen(window, enabled)) {
+            SDL_SyncWindow(window);
+        } else {
+            LOG("window: fullscreen change failed: %s", SDL_GetError());
+        }
         s.fullscreen = (SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN) != 0;
-        if (!s.fullscreen && restore_after_fullscreen) {
+        if (log_presentation) LOG("window: fullscreen %s", s.fullscreen ? "on" : "off");
+        if (!enabled && !s.fullscreen && restore_after_fullscreen) {
             restore_after_fullscreen = false;
-            SDL_RestoreWindow(window);
+            SDL_MaximizeWindow(window);
         }
 #ifdef _WIN32
         resolution_menu.set_visible(!s.fullscreen);
@@ -468,20 +493,21 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
         redraw_requested = true;
         s.save();
     };
-    bool locked_16_by_9 = false;
     auto relayout = [&] {
         redraw_requested = true;
         const bool lock_ratio = top_screen_16_by_9();
-        const bool changed_lock = lock_ratio != locked_16_by_9;
-        if (changed_lock) {
-            const float ratio = lock_ratio ? sm3dl::widescreen_aspect : 0.0f;
-            SDL_SetWindowAspectRatio(window, ratio, ratio);
-            locked_16_by_9 = lock_ratio;
-        }
         const auto flags = SDL_GetWindowFlags(window);
+        const bool windowed_lock = lock_ratio && !(flags & SDL_WINDOW_FULLSCREEN);
+        const bool changed_lock = windowed_lock != locked_16_by_9;
+        if (changed_lock) {
+            const float ratio = windowed_lock ? sm3dl::widescreen_aspect : 0.0f;
+            SDL_SetWindowAspectRatio(window, ratio, ratio);
+            locked_16_by_9 = windowed_lock;
+        }
         int client_w = 0, client_h = 0;
-        const bool fill_window = lock_ratio && (flags & SDL_WINDOW_MAXIMIZED) && !(flags & SDL_WINDOW_FULLSCREEN) &&
-            SDL_GetRenderOutputSize(renderer, &client_w, &client_h) && sm3dl::can_extend_16_by_9(client_w, client_h);
+        const bool fill_window = lock_ratio && SDL_GetRenderOutputSize(renderer, &client_w, &client_h) &&
+            sm3dl::extend_maximized_16_by_9((flags & SDL_WINDOW_FULLSCREEN) != 0,
+                                          (flags & SDL_WINDOW_MAXIMIZED) != 0, client_w, client_h);
         layout.window_top_width = fill_window ? float(double(client_w) * SCREEN_HEIGHT / client_h) : 0;
         if (fill_window)
             pica::set_window_top_margin(sm3dl::top_margin_for_client(client_w, client_h, TOP_WIDTH, SCREEN_HEIGHT));
@@ -553,15 +579,18 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
                 continue;
             }
 #endif
-            if (top_screen_16_by_9() &&
-                (e.type == SDL_EVENT_WINDOW_MAXIMIZED || e.type == SDL_EVENT_WINDOW_RESIZED ||
-                 e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED) &&
-                (SDL_GetWindowFlags(window) & SDL_WINDOW_MAXIMIZED))
-                relayout();
-            if ((e.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN || e.type == SDL_EVENT_WINDOW_RESTORED) &&
-                top_screen_16_by_9() && !(SDL_GetWindowFlags(window) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED))) {
-                first_layout = true;
-                relayout();
+            if (top_screen_16_by_9()) {
+                const auto flags = SDL_GetWindowFlags(window);
+                const auto fixed_size = flags & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED);
+                const bool restored = e.type == SDL_EVENT_WINDOW_LEAVE_FULLSCREEN || e.type == SDL_EVENT_WINDOW_RESTORED;
+                const bool mode_changed = restored || e.type == SDL_EVENT_WINDOW_ENTER_FULLSCREEN ||
+                                          e.type == SDL_EVENT_WINDOW_MAXIMIZED;
+                const bool output_changed = e.type == SDL_EVENT_WINDOW_RESIZED ||
+                                            e.type == SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED;
+                if (mode_changed || (fixed_size && output_changed)) {
+                    if (restored && !fixed_size) first_layout = true;
+                    relayout();
+                }
             }
             if (e.type == SDL_EVENT_KEY_DOWN && !e.key.repeat && e.key.scancode == SDL_SCANCODE_F9) {
                 s.toggle_screen_layout();
@@ -572,6 +601,11 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
                 e.type == SDL_EVENT_RENDER_TARGETS_RESET)
                 redraw_requested = true;
 """)
+    source = source.replace(
+        '                    if (!s.fullscreen) first_layout = true, relayout();',
+        '''                    if (!s.fullscreen) first_layout = true;
+                    // Recompute even on entry: the maximized crop does not belong to fullscreen.
+                    relayout();''')
     source = source.replace(
         """        {
             std::lock_guard lk(frame_lock);
@@ -967,7 +1001,7 @@ void submit_commands(SDL_GPUCommandBuffer *cmd) {
         "    if (interp_this) for (auto &l : surface_loads) reloaded.push_back(l.surface);",
     )
     source = reuse_upload_buffer(source)
-    return hd_texture_gpu(course_hud_gpu(lcd_smoothing(land_lcd(source))))
+    return hd_texture_gpu(course_hud_gpu(land_lcd(source)))
 
 
 def hd_texture_gpu(source):
@@ -1039,62 +1073,6 @@ void begin_list() {
         hd_pack_enabled = hd;
         LOG("HD textures: %s", hd ? "on" : "off");
     }''')
-    return source
-
-
-def lcd_smoothing(source):
-    source = source.replace('#include "sm3dl_lcd.inc"',
-                            '#include "sm3dl_lcd.inc"\n#include "sm3dl_estimate.inc"\n'
-                            '#include "sm3dl_screen_motion.inc"\n#include "sm3dl_interpolate.inc"')
-    source = source.replace("std::vector<SDL_GPUTexture *> retired_scanouts;",
-                            'std::vector<SDL_GPUTexture *> retired_scanouts;\n#include "lcd_smoothing.h"\nLcdSmoother smoother;')
-    source = source.replace(between(source, "SDL_GPUTexture *top_frame(", "std::vector<SDL_GPUTexture *> take_retired_scanouts()"),
-                            """SDL_GPUTexture *top_frame(uint32_t address, int *width, int *height, bool *interpolated) {
-    if (!ok) return nullptr;
-    SDL_LockMutex(lcd_lock);
-    auto it = lcd.find(address);
-    SDL_GPUTexture *frame = nullptr;
-    if (it != lcd.end() && it->second.latest >= 0) {
-        frame = it->second.tex[it->second.latest];
-        *width = it->second.w;
-        *height = it->second.h;
-    }
-    const uint64_t tick = vblanks.load();
-    if (!frame) {
-        smoother.previous = nullptr;
-        smoother.original_pending = false;
-    } else if (smoother.previous != frame || smoother.previous_address != address) {
-        auto last = lcd.find(smoother.previous_address);
-        const uint64_t gap = tick - smoother.previous_tick;
-        const bool same_size = last != lcd.end() && last->second.w == *width && last->second.h == *height;
-        const bool previous_valid = same_size && last->second.latest >= 0 &&
-                                    last->second.tex[last->second.latest] == smoother.previous;
-        auto *previous = smoother.previous;
-        const bool pending = smoother.original_pending;
-        smoother.previous = frame;
-        smoother.previous_address = address;
-        smoother.previous_tick = tick;
-        smoother.original_pending = false;
-        if (previous_valid && pending && gap == 1) {
-            frame = previous;
-            smoother.original_pending = true;
-        // Only fill a missing refresh when the game provides a new 30 Hz frame.
-        // A cut or stall must never accumulate extra latency.
-        } else if (previous_valid && previous && gap >= 2 && gap <= 3) {
-            if (auto *mid = smoother.render(previous, frame, *width, *height)) {
-                frame = mid;
-                *interpolated = true;
-                smoother.original_pending = true;
-            }
-        }
-    } else {
-        smoother.original_pending = false;
-    }
-    SDL_UnlockMutex(lcd_lock);
-    return frame;
-}
-
-""")
     return source
 
 
@@ -1716,56 +1694,6 @@ def applets(source):
         case 0x004B:""")
 
 
-def native_timing_replace(source, anchor, replacement):
-    if source.count(anchor) != 1:
-        raise ValueError(f"Missing or ambiguous native timing anchor: {anchor.strip()}")
-    return source.replace(anchor, replacement)
-
-
-def native_course_gsp(source):
-    return '#include "logic60.h"\n' + native_timing_replace(
-        source, '            pica::gpu::vblank();\n            apply_swaps();',
-        '''            logic60::vblank(pica::gpu::active());
-            pica::gpu::vblank();
-            const auto old_top = lcd[0].addr;
-            apply_swaps();
-            if (logic60::requested())
-                logic60::presented(old_top != lcd[0].addr, pica::gpu::lcd_frame_sequence(lcd[0].addr));''')
-
-
-def native_course_gpu(source):
-    source = '#include "logic60.h"\n' + source
-    source = native_timing_replace(source, '    uint32_t scanout_bytes = 0;',
-                                   '    uint32_t scanout_bytes = 0;\n    uint64_t native_sequence = 0;')
-    source = native_timing_replace(source, 'SDL_Mutex *lcd_lock;',
-                                   'SDL_Mutex *lcd_lock;\nuint64_t native_scanout_serial = 0; // under lcd_lock')
-    source = native_timing_replace(source, '    f.latest = slot;', '''    f.latest = slot;
-    if (top && logic60::requested()) f.native_sequence = ++native_scanout_serial;''')
-    source = native_timing_replace(source, 'SDL_GPUTexture *lcd_frame(uint32_t addr, int *width, int *height) {',
-                                   '''uint64_t lcd_frame_sequence(uint32_t addr) {
-    if (!ok || !addr) return 0;
-    SDL_LockMutex(lcd_lock);
-    const auto it = lcd.find(addr);
-    const uint64_t sequence = it == lcd.end() ? 0 : it->second.native_sequence;
-    SDL_UnlockMutex(lcd_lock);
-    return sequence;
-}
-
-SDL_GPUTexture *lcd_frame(uint32_t addr, int *width, int *height) {''')
-    source = native_timing_replace(source, '    bool want = interp_wanted.load();',
-                                   '    bool want = interp_wanted.load() && !logic60::active();')
-    return native_timing_replace(source, '    const uint64_t tick = vblanks.load();\n    if (!frame) {', '''    // Native simulation already supplies the frames: no synthetic frame or queue delay.
-    if (logic60::active()) {
-        smoother.previous = nullptr;
-        smoother.original_pending = false;
-        *interpolated = false;
-        SDL_UnlockMutex(lcd_lock);
-        return frame;
-    }
-    const uint64_t tick = vblanks.load();
-    if (!frame) {''')
-
-
 def prepare(upstream, output):
     for directory in ("src", "include"):
         shutil.copytree(upstream / directory, output / directory, dirs_exist_ok=True)
@@ -1781,9 +1709,7 @@ def prepare(upstream, output):
         "#include <cstdint>", "#include <cstdint>\n#include <vector>").replace(
         "uint32_t out_w, uint32_t out_h,\n                      uint32_t flags);",
         "uint32_t out_w, uint32_t out_h,\n                      uint32_t flags, bool right_eye);").replace(
-        "top_frame(int *width, int *height)", "top_frame(uint32_t address, int *width, int *height, bool *interpolated)").replace(
-        "SDL_GPUTexture *lcd_frame(", "std::vector<SDL_GPUTexture *> take_retired_scanouts();\n"
-        "uint64_t lcd_frame_sequence(uint32_t addr);\nSDL_GPUTexture *lcd_frame("))
+        "SDL_GPUTexture *lcd_frame(", "std::vector<SDL_GPUTexture *> take_retired_scanouts();\nSDL_GPUTexture *lcd_frame("))
     edit(src / "video/pica.h", lambda source: source.replace(
         "uint32_t in_dims, uint32_t out_dims, uint32_t flags);",
         "uint32_t in_dims, uint32_t out_dims, uint32_t flags, bool right_eye = false);").replace(
@@ -1886,16 +1812,9 @@ def prepare(upstream, output):
 #else
             if (hold) {
 #endif""").replace(
-        "            SDL_GPUTexture *frame = screen == 0 ? pica::gpu::top_frame(&gw, &gh) : nullptr;",
-        """            bool interpolated = false;
-            SDL_GPUTexture *frame = screen == 0 ? pica::gpu::top_frame(lcd[0].addr, &gw, &gh, &interpolated) : nullptr;
-            if (screen == 0 && frame != previous_top_frame) {
-                previous_top_frame = frame;
-                if (frame) {
-                    ++top_updates;
-                    if (interpolated) ++frames_interpolated;
-                }
-            }""").replace(
+        """            SDL_GPUTexture *frame = screen == 0 ? pica::gpu::top_frame(&gw, &gh) : nullptr;
+            if (!frame) frame = pica::gpu::lcd_frame(lcd[screen].addr, &gw, &gh);""",
+        "            SDL_GPUTexture *frame = pica::gpu::lcd_frame(lcd[screen].addr, &gw, &gh);").replace(
         "        lcd[screen] = {info[1], info[3], info[4]};",
         """        if (screen == 0) {
             auto remember = [](auto &history, uint32_t address) {
@@ -1936,22 +1855,13 @@ def prepare(upstream, output):
         "            if ((c[3] >> 16) == 400) frames_rendered++;\n", "").replace(
         "    uint32_t frames_rendered = 0; // display transfers to the top screen, for YW2_FPS",
         "    uint32_t frames_rendered = 0; // new top-screen buffers for SM3DL_FPS\n"
-        "    SDL_GPUTexture *previous_top_frame = nullptr;\n"
-        "    uint32_t top_updates = 0;\n"
-        "    uint32_t frames_interpolated = 0;\n"
         "    std::chrono::steady_clock::time_point fps_since = std::chrono::steady_clock::now();").replace(
         "            pica::SceneInfo si = pica::scene_info();",
         "            const auto now = std::chrono::steady_clock::now();\n"
         "            const double seconds = std::chrono::duration<double>(now - fps_since).count();\n"
         "            fps_since = now;\n"
         "            pica::SceneInfo si = pica::scene_info();").replace(
-        "frames_rendered / 5.0", "frames_rendered / seconds").replace(
-        "            frames_rendered = 0;",
-        """            if (frames_interpolated)
-                LOG("graphics: %.1f top LCD updates/s (%.1f original + %.1f extra refreshes)",
-                    top_updates / seconds, (top_updates - frames_interpolated) / seconds,
-                    frames_interpolated / seconds);
-            frames_rendered = frames_interpolated = top_updates = 0;"""))
+        "frames_rendered / 5.0", "frames_rendered / seconds"))
     edit(src / "video/color.h", lambda source: source.replace(
         "inline uint32_t fb_bpp(uint32_t format)",
         """// The PICA render-target register swaps the two 16-bit format IDs used by GX and LCD.
@@ -1963,8 +1873,7 @@ inline uint32_t render_target_format(uint32_t reg) {
 }
 
 inline uint32_t fb_bpp(uint32_t format)"""))
-    edit(src / "hle/gsp.cpp", native_course_gsp)
-    edit(src / "video/gpu/gpu.cpp", lambda source: native_course_gpu(gpu(source)))
+    edit(src / "video/gpu/gpu.cpp", gpu)
     edit(src / "video/pica.cpp", lambda source: vertex_workers(pica(source)))
     edit(src / "video/raster.cpp", lambda source: source.replace(
         "cur.color_format = (regs[COLOR_FORMAT] >> 16) & 7;",

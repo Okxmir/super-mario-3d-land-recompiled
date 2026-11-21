@@ -28,6 +28,12 @@ constexpr bool can_extend_16_by_9(int width, int height) {
            std::int64_t(width) * 3 <= std::int64_t(height) * 7;
 }
 
+// Only window chrome calls for a wider crop. On F11 the output belongs
+// to the monitor, even if SDL still reports the saved maximized state.
+constexpr bool extend_maximized_16_by_9(bool fullscreen, bool maximized, int width, int height) {
+    return !fullscreen && maximized && can_extend_16_by_9(width, height);
+}
+
 constexpr int top_margin_for_client(int width, int height, int native_width, int native_height) {
     if (!can_extend_16_by_9(width, height)) return 0;
     const auto numerator = std::int64_t(width) * native_height - std::int64_t(height) * native_width;

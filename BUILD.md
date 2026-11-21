@@ -32,7 +32,7 @@ To use an installed toolchain, omit `-Portable`. This path requires 64-bit Pytho
 
 The game uses the original 400 × 240 top screen and 320 × 240 touchscreen. Upscaling multiplies each screen's width and height by the same factor.
 
-The Vulkan renderer targets a 60 Hz refresh for the top screen and keeps the original 30 Hz game logic. It fills the extra refresh with a uniform pixel translation when the camera motion is consistent across the screen. Other movements and cuts use the original image. This can add one display refresh of latency.
+The game runs with its original 30 Hz logic and 30 FPS rendering, without frame interpolation. In 16:9 Widescreen, **F11** fills a 16:9 display without stretching the image or keeping the wider crop used for the maximized window.
 
 Connect a gamepad and use the left stick to move. Controller mappings follow the positions of the 3DS buttons. On an Xbox controller, **A** jumps, **X** runs, and **Menu** pauses. Press **D-pad Up** in a course to use the reserve item in any screen layout.
 
@@ -65,8 +65,6 @@ Use `--language en`, `fr`, `de`, `es`, `it`, `nl`, `pt`, or `ru`. Omit the optio
 For the graphical builder, run `bash SuperMario3DLandBuilder` from the project or extracted builder folder. Choose the ROM and language, then click **Build**. The builder shows progress and estimates the remaining time once enough compilation steps have finished. When the build completes, run the builder again to launch the game. Use `bash SuperMario3DLandBuilder --build-menu` to return to the ROM and language selector. The game directory is created beside the ROM. The builder writes a log to `build/linux-builder.log`.
 
 Each build uses up to four parallel compile jobs by default. Set `CMAKE_BUILD_PARALLEL_LEVEL=2` if you need to reduce compiler memory use. **F4** cycles through the upscaling options with Vulkan, **F7** switches aspect ratios, and **F9** switches the upper-screen layout.
-
-The standard build enables experimental native 60 Hz course logic with Vulkan. No additional build or launch command is needed. Launch with `--original-30hz` to restore the original logic for that run. See [Display](README.md#display) for Windows and Linux launch examples and current limitations.
 
 ## Optional HD textures
 

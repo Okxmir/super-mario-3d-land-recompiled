@@ -4,7 +4,6 @@
 #include "kernel/kernel.h"
 #include "loader.h"
 #include "log.h"
-#include "logic60.h"
 #include "memory.h"
 #include "platform.h"
 #include "save_storage.h"
@@ -256,30 +255,13 @@ int run_game(int argc, Char **argv) {
     if (argc == 2 && option == "--verify-display-colors") return verify_display_colors();
     if (argc == 2 && option == "--verify-apt-wrap") return hle::verify_apt_wrap();
     const bool verify = argc == 3 && option == "--verify-startup";
-    const auto usage = [] {
-        std::puts("SuperMario3DLandRecompiled [--original-30hz] [path to a decrypted European ROM (.3ds, .cci, .cxi)]");
-        std::puts("Experimental native 60 Hz course logic is on by default with Vulkan.");
-        std::puts("--original-30hz  Use the original 30 Hz course logic for this launch.");
-    };
-    if (argc == 2 && option == "--help") { usage(); return 0; }
-    const Char *rom_argument = nullptr;
-    bool native_60hz = true;
-    bool timing_option_seen = false;
-    if (!verify) for (int i = 1; i < argc; ++i) {
-        const auto value = utf8_path(argv[i]);
-        if (value == "--original-30hz" || value == "--native-60hz") {
-            if (timing_option_seen) { usage(); return 2; }
-            timing_option_seen = true;
-            native_60hz = value == "--native-60hz";
-        } else if (!rom_argument && !value.starts_with("--")) rom_argument = argv[i];
-        else { usage(); return 2; }
+    if (!verify && (argc > 2 || option.starts_with("--"))) {
+        std::puts("SuperMario3DLandRecompiled [path to a decrypted European ROM (.3ds, .cci, .cxi)]");
+        return argc == 2 && option == "--help" ? 0 : 2;
     }
     log_cfg::init();
     if (verify) return verify_native_startup(utf8_path(argv[2]).c_str());
-    if (native_60hz) {
-        logic60::request();
-        LOG("logic60: experimental mode enabled for Vulkan (some states retain 30 Hz)");
-    }
+    LOG("timing: original 30 Hz game logic; no frame interpolation");
     if (!std::getenv("SM3DL_NO_DIALOG")) {
         fatal_hook = [](const char *message) {
             SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Super Mario 3D Land", message, nullptr);
@@ -288,8 +270,8 @@ int run_game(int argc, Char **argv) {
     const char *base = SDL_GetBasePath();
     const auto directory = std::filesystem::u8path(base ? base : ".");
     std::filesystem::path image;
-    if (rom_argument) {
-        image = rom_argument;
+    if (argc == 2) {
+        image = argv[1];
     } else {
         image = directory / "SM3DL-EUR.cxi";
         if (!std::filesystem::is_regular_file(image)) image = directory / ".." / "extracted" / "SM3DL-EUR.cxi";
