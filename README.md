@@ -50,7 +50,7 @@ For the graphical builder, run `bash SuperMario3DLandBuilder`. It creates the ga
 
 ## Display
 
-Use the Windows **Upscaling** menu or **F4** on Linux to select 1×, 2×, or 4×. The game keeps its original 30 Hz timing for physics, objects and the countdown. Vulkan adds intermediate display frames automatically when camera motion can be matched safely. A cut or inconsistent motion can repeat an original frame instead. This targets 60 FPS on the upper screen; it does not make the simulation, each object, or the touchscreen run at 60 Hz. Actual output depends on the scene and the PC. Software rendering uses the original frames.
+Use the Windows **Upscaling** menu or **F4** on Linux to select 1×, 2×, or 4×. The game keeps its original 30 Hz timing for physics, objects and the countdown. Vulkan adds intermediate display frames automatically when camera motion can be matched safely, while keeping the timer and coin counter fixed on screen. A cut or inconsistent motion can still repeat an original frame. This targets 60 FPS on the upper screen; it does not make the simulation, each object, or the touchscreen run at 60 Hz. Actual output depends on the scene and the PC. Software rendering uses the original frames.
 
 With Vulkan, wider formats expand the 3D view and **F7** cycles through the three formats. The Windows **Aspect ratio** menu selects the same formats. The lower touchscreen keeps its original 4:3 proportions. The fallback renderer uses the original format.
 

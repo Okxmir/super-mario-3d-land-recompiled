@@ -8,6 +8,10 @@
 
 static const float2 NativeSize = float2(400, 240);
 static const int Radius = 4;
+// The game bakes the coin counter and timer into the upper LCD. The reserve,
+// lives and level label in widescreen mode are composited later by the frontend.
+static const float HudLeft = 84.0, HudRight = 90.0, HudBottom = 30.0;
+static const float HudGuard = Radius + 1.0, HudFeather = 16.0;
 
 float difference(float3 a, float3 b) {
     return dot(abs(a - b), float3(0.25, 0.5, 0.25));
@@ -72,7 +76,31 @@ float4 interpolate(ScreenVertex vertex) : SV_Target0 {
     uint width, height;
     Current.GetDimensions(width, height);
     int2 pos = int2(vertex.position.xy);
-    int2 shift = vertex.motion * int(height / (uint)NativeSize.y);
+    if (all(vertex.motion == 0)) return Previous.Load(int3(pos, 0));
+    int scale = int(height / (uint)NativeSize.y);
+    int2 shift = vertex.motion * scale;
+    if (vertex.position.y < (HudBottom + HudGuard + HudFeather) * scale) {
+        float2 nativePos = vertex.position.xy / scale;
+        float nativeWidth = float(width) / scale;
+        // Cover both edge-anchored sprites and sprites kept inside the centered
+        // 400px viewport when the widescreen scanout adds horizontal margins.
+        float margin = max(nativeWidth - NativeSize.x, 0.0) * 0.5;
+        float fromHud = max(nativePos.y - HudBottom,
+                            min(nativePos.x - HudLeft, nativeWidth - nativePos.x - HudRight) - margin);
+        // Include the largest sample offset, so a displaced copy of a digit
+        // cannot appear next to the fixed one. Only interpolate the scene.
+        if (fromHud <= HudGuard) return Previous.Load(int3(pos, 0));
+        if (fromHud < HudGuard + HudFeather) {
+            // Ease into the full camera shift. An abrupt cut at the edge of the
+            // fixed area would split background objects passing through it.
+            float2 delta = float2(shift) * smoothstep(HudGuard, HudGuard + HudFeather, fromHud);
+            float2 size = float2(width, height);
+            float2 source = vertex.position.xy - delta;
+            if (all(source >= 0.5) && all(source <= size - 0.5))
+                return Previous.SampleLevel(PreviousSampler, source / size, 0);
+            return Current.SampleLevel(CurrentSampler, (vertex.position.xy + delta) / size, 0);
+        }
+    }
     int2 previousPos = pos - shift;
     if (all(previousPos >= 0) && all(previousPos < int2(width, height)))
         return Previous.Load(int3(previousPos, 0));
