@@ -63,6 +63,9 @@ try {
     $memmap = Get-VerifiedArchive 'memmap2-0.9.11.crate' `
         'https://static.crates.io/crates/memmap2/memmap2-0.9.11.crate' `
         'D1219ED1B7F229EE7104D281DD01D6802FE28BB6E95D292942C4DAACDEB798C0'
+    $alonPatch = Get-VerifiedArchive 'alon-60fps-0.2-preview.ips' `
+        'https://raw.githubusercontent.com/AlonBorodAHub/mario-3d-land-60fps/eab11f6cc03c9df6ba06cd56af1ac28e7cf64a09/patch/code.ips' `
+        '6CDC315748EB2EB1461ED5447BB9FDB65B195D49F4237BD760BBF5166BD2004F'
 
     if (!(Test-Path -LiteralPath "$upstream/clockwork-master/tools/recomp/src/main.rs")) {
         Expand-Archive -LiteralPath $clockwork -DestinationPath $upstream -Force
@@ -137,7 +140,10 @@ try {
     $stagedCode = 'build/generated-staging'
     New-Item -ItemType Directory -Path $generated,$stagedCode -Force | Out-Null
     Get-ChildItem -LiteralPath $stagedCode -File | Remove-Item
-    & build/tools/recomp.exe emit extracted/sm3dl-eur $stagedCode | Tee-Object -FilePath logs/recompile.txt
+    $patchedCode = 'build/alon-eur-code'
+    python tools/relocate_alon.py $alonPatch extracted/sm3dl-eur $patchedCode "$stagedCode/alon_eur_payload.inc"
+    if ($LASTEXITCODE -ne 0) { throw 'Could not adapt the native 60 FPS patch for the verified European code.' }
+    & build/tools/recomp.exe emit $patchedCode $stagedCode | Tee-Object -FilePath logs/recompile.txt
     if ($LASTEXITCODE -ne 0) { throw 'Native code generation failed.' }
     $nextFiles = Get-ChildItem -LiteralPath $stagedCode -File
     foreach ($file in $nextFiles) {

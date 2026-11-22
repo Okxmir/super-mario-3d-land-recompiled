@@ -41,21 +41,15 @@ else()
     set(DXC "${UPSTREAM}/dxc-linux-1.8.2505.1/bin/dxc")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    tools/prepare_runtime.py tools/coherent_pica_fast.py tools/coherent_timer.py)
-option(SM3DL_EXPERIMENTAL_GEOMETRY "Interpolate 3D draws while preserving the original shadow masks" ON)
-if(SM3DL_EXPERIMENTAL_GEOMETRY)
-    set(SM3DL_RENDER_MODE --coherent-geometry)
-else()
-    set(SM3DL_RENDER_MODE --main-renderer)
-endif()
+    tools/prepare_runtime.py tools/alon_runtime.py tools/coherent_pica_fast.py tools/coherent_timer.py)
 execute_process(
-    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/prepare_runtime.py"
-            "${UPSTREAM}/clockwork-master/runtime" "${RUNTIME}" ${SM3DL_RENDER_MODE}
+    COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/alon_runtime.py"
+            "${UPSTREAM}/clockwork-master/runtime" "${RUNTIME}"
     COMMAND_ERROR_IS_FATAL ANY
 )
 
 file(GLOB TRANSLATED_CODE CONFIGURE_DEPENDS "${GENERATED}/*.c")
-if(NOT TRANSLATED_CODE)
+if(NOT TRANSLATED_CODE OR NOT EXISTS "${GENERATED}/alon_eur_payload.inc")
     message(FATAL_ERROR "Prepare the game with build.cmd on Windows or build.sh on Linux")
 endif()
 add_library(game_code OBJECT ${TRANSLATED_CODE})
@@ -87,11 +81,8 @@ list(TRANSFORM RUNTIME_FILES PREPEND "${RUNTIME}/src/")
 add_executable(SuperMario3DLand src/main.cpp src/shared_font.cpp src/save_storage.cpp src/pica_shader_jit.cpp
     src/cecd.cpp src/microphone.cpp src/local_mii.cpp src/apt_wrap.cpp src/hd_texture_pack.cpp src/cityhash64.cpp ${RUNTIME_FILES})
 set_target_properties(SuperMario3DLand PROPERTIES OUTPUT_NAME SuperMario3DLandRecompiled)
-if(SM3DL_EXPERIMENTAL_GEOMETRY)
-    set_property(SOURCE "${RUNTIME}/src/video/gpu/gpu.cpp"
-        APPEND PROPERTY COMPILE_DEFINITIONS SM3DL_COHERENT_ATOMIC_STENCIL_DEFAULT=1)
-endif()
-target_include_directories(SuperMario3DLand PRIVATE "${RUNTIME}/include" "${RUNTIME}/src" src "${UPSTREAM}/xbyak-df112862583c2d327c1d9782fd28f53aa675f11d")
+target_include_directories(SuperMario3DLand PRIVATE "${RUNTIME}/include" "${RUNTIME}/src" "${GENERATED}" src
+    "${UPSTREAM}/xbyak-df112862583c2d327c1d9782fd28f53aa675f11d")
 target_link_libraries(SuperMario3DLand PRIVATE game_code SDL3::SDL3)
 if(WIN32)
     target_compile_definitions(SuperMario3DLand PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)

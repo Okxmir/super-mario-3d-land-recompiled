@@ -23,6 +23,7 @@ EXTRACTED = ROOT / "extracted"
 GENERATED = ROOT / "generated" / "sm3dl-eur"
 CLOCKWORK = "3047d9e990be4ac2c84174cb570dfec569c882e9"
 XBYAK = "df112862583c2d327c1d9782fd28f53aa675f11d"
+ALON = "eab11f6cc03c9df6ba06cd56af1ac28e7cf64a09"
 FONT = "f470e0c9d341db73b8a24880295d2eab4cd81660"
 LANGUAGES = {"en": 1, "fr": 2, "de": 3, "it": 4, "es": 5, "nl": 8, "pt": 9, "ru": 10}
 
@@ -105,7 +106,7 @@ def prepare_system_resources():
         shutil.copyfile(font / "code.bcfnt", target)
 
 
-def prepare_game(args, clockwork):
+def prepare_game(args, clockwork, alon_patch):
     workspace = BUILD / "linux-tools"
     workspace.mkdir(exist_ok=True)
     for name in ("Cargo.toml", "Cargo.lock"):
@@ -136,7 +137,9 @@ def prepare_game(args, clockwork):
         print("Build stage: Recompiling ARM code", flush=True)
         GENERATED.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=GENERATED.parent) as output:
-            subprocess.run([tools / "recomp", "emit", code, output], check=True)
+            patched = Path(work) / "alon-eur-code"
+            python("tools/relocate_alon.py", alon_patch, code, patched, Path(output) / "alon_eur_payload.inc")
+            subprocess.run([tools / "recomp", "emit", patched, output], check=True)
             generated = {file.name: file for file in Path(output).iterdir()}
             for name, file in generated.items():
                 existing = GENERATED / name
@@ -223,7 +226,10 @@ def main():
 def run_build(args):
     print("Build stage: Preparing dependencies", flush=True)
     clockwork = prepare_dependencies()
-    prepare_game(args, clockwork)
+    alon_patch = download("alon-60fps-0.2-preview.ips",
+                          f"https://raw.githubusercontent.com/AlonBorodAHub/mario-3d-land-60fps/{ALON}/patch/code.ips",
+                          "6cdc315748eb2eb1461ed5447bb9fdb65b195d49f4237bd760bbf5166bd2004f")
+    prepare_game(args, clockwork, alon_patch)
     print("Build stage: Preparing game resources", flush=True)
     prepare_system_resources()
     print("Build stage: Compiling the game", flush=True)

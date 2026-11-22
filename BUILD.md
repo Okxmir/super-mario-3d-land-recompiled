@@ -8,6 +8,8 @@ Use a decrypted `.3ds`, `.cci`, or `.cxi` dump of the supported European revisio
 
 The builder identifies the supported original revision from the game code. It verifies the decrypted content even if the container still reports encryption. When the full ExHeader matches the supported original, the extractor can restore its digest in the generated build copy. The input ROM stays on disk as supplied. Revisions with different game code require a separate port update.
 
+The first build downloads the [upstream 0.2-preview ARM patch](https://github.com/AlonBorodAHub/mario-3d-land-60fps/tree/eab11f6cc03c9df6ba06cd56af1ac28e7cf64a09/patch) and checks its SHA-256. The build relocates it for the European ROM before generating native code. You do not need the USA ROM, Azahar, or the upstream installer. No patch or game data is bundled in the builders.
+
 Open the project folder in File Explorer, type `cmd` in the address bar, and press Enter. Run the build from Command Prompt.
 
 ```bat

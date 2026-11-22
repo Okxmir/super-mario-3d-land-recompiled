@@ -21,7 +21,7 @@ def main():
         // pointers. The compiler emits no direct calls to these callbacks.
         let start = 0x003a0db4u32.wrapping_add(image.u32(0x003a0ddc).unwrap());
         let end = 0x003a0dbcu32.wrapping_add(image.u32(0x003a0de0).unwrap());
-        assert_eq!((start, end), (0x003a0de4, image.text.addr + image.text.size));
+        assert_eq!((start, end), (0x003a0de4, 0x003a1784));
         for slot in (start..end).step_by(4) {
             let address = slot.wrapping_add(image.u32(slot).unwrap());
             assert!(address >= image.text.addr && address < start && address & 3 == 0);
@@ -31,10 +31,20 @@ def main():
         // a null slot in this table.
         let method = image.u32(0x003d9444).unwrap();
         assert_eq!(method, 0x0024dcf4);
-        d.add_entry(method, false);""")
+        d.add_entry(method, false);
+        // Render helpers entered through computed LR/PC jumps in the EUR patch.
+        for address in [0x003a1eb0, 0x003a1ebc, 0x003a1ef4, 0x00473000] {
+            d.add_entry(address, false);
+        }""")
     source = source.replace("        Op::Udf | Op::Bkpt(_) => Flow::Stop,",
                             "        Op::Udf | Op::Bkpt(_) if !conditional => Flow::Stop,")
     discover.write_text(source, encoding="utf-8")
+    image = args.output / "image.rs"
+    source = image.read_text(encoding="utf-8")
+    anchor = '        addr >= self.text.addr && addr < self.text.addr + self.text.size'
+    if source.count(anchor) != 1:
+        raise ValueError('Unexpected Clockwork text range')
+    image.write_text(source.replace(anchor, anchor + '\n            || (0x00473000..0x004730a8).contains(&addr)'), encoding="utf-8")
 
 
 if __name__ == "__main__":
