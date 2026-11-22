@@ -5,7 +5,7 @@ An experimental native Windows x64 and Linux x86-64 port of Super Mario 3D Land.
 ## Current features
 
 - Native Windows x64 and Linux x86-64 executables built from the supported European ROM.
-- Original 30 Hz gameplay, with Vulkan frame interpolation targeting 60 FPS on the upper screen.
+- Original 30 Hz gameplay, with experimental Vulkan geometry interpolation targeting 60 FPS during courses while retaining the original shadow masks.
 - 1×, 2×, and 4× upscaling with a saved selection. Use the **Upscaling** menu on Windows or **F4** on Linux.
 - Optional [1080p texture pack by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd). The graphical builders download and install it during the build when **Install HD textures** is checked. The option starts checked. With Vulkan, click **HD** on Windows or use **Ctrl+F10** on Linux to switch textures while playing.
 - Original (5:3), 16:9, and experimental 21:9 aspect ratios. Use **F7** or the localized **Aspect ratio** menu on Windows. The selected format is saved between launches.
@@ -50,9 +50,9 @@ For the graphical builder, run `bash SuperMario3DLandBuilder`. It creates the ga
 
 ## Display
 
-Use the Windows **Upscaling** menu or **F4** on Linux to select 1×, 2×, or 4×. The game keeps its original 30 Hz timing for physics, objects and the countdown. Vulkan adds intermediate display frames automatically when camera motion can be matched safely, while keeping the timer and coin counter fixed on screen. A cut or inconsistent motion can still repeat an original frame. This targets 60 FPS on the upper screen; it does not make the simulation, each object, or the touchscreen run at 60 Hz. Actual output depends on the scene and the PC. Software rendering uses the original frames.
+Use the Windows **Upscaling** menu or **F4** on Linux to select 1×, 2×, or 4×. Physics, objects, and the countdown keep their original 30 Hz timing. During courses, Vulkan interpolates eligible models between game frames and keeps the original shadow masks and their surrounding surfaces together. Other scenes retain the previous display smoothing, which keeps the timer and coin counter fixed. A frame can still repeat when motion cannot be matched. The 60 FPS target is for the upper screen, not the gameplay simulation or touchscreen, and performance depends on the scene and hardware. Software rendering uses the original frames.
 
-With Vulkan, wider formats expand the 3D view and **F7** cycles through the three formats. The Windows **Aspect ratio** menu selects the same formats. The lower touchscreen keeps its original 4:3 proportions. The fallback renderer uses the original format.
+With Vulkan, wider formats expand the 3D view and **F7** cycles through the three formats. The Windows **Aspect ratio** menu selects the same formats. In **16:9**, the opening cutscene fills the upper screen without its original cinematic matte. No stretching or cropping is applied. The lower touchscreen keeps its original 4:3 proportions. The fallback renderer uses the original format.
 
 The 21:9 mode is experimental. Its wider view can reveal scenery edges or objects outside the original camera view.
 

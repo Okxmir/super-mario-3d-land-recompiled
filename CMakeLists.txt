@@ -40,10 +40,17 @@ else()
     add_subdirectory("${UPSTREAM}/SDL3-3.4.0-linux" "${CMAKE_CURRENT_BINARY_DIR}/sdl" EXCLUDE_FROM_ALL)
     set(DXC "${UPSTREAM}/dxc-linux-1.8.2505.1/bin/dxc")
 endif()
-set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS tools/prepare_runtime.py)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    tools/prepare_runtime.py tools/coherent_pica_fast.py tools/coherent_timer.py)
+option(SM3DL_EXPERIMENTAL_GEOMETRY "Interpolate 3D draws while preserving the original shadow masks" ON)
+if(SM3DL_EXPERIMENTAL_GEOMETRY)
+    set(SM3DL_RENDER_MODE --coherent-geometry)
+else()
+    set(SM3DL_RENDER_MODE --main-renderer)
+endif()
 execute_process(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/prepare_runtime.py"
-            "${UPSTREAM}/clockwork-master/runtime" "${RUNTIME}"
+            "${UPSTREAM}/clockwork-master/runtime" "${RUNTIME}" ${SM3DL_RENDER_MODE}
     COMMAND_ERROR_IS_FATAL ANY
 )
 
@@ -80,6 +87,10 @@ list(TRANSFORM RUNTIME_FILES PREPEND "${RUNTIME}/src/")
 add_executable(SuperMario3DLand src/main.cpp src/shared_font.cpp src/save_storage.cpp src/pica_shader_jit.cpp
     src/cecd.cpp src/microphone.cpp src/local_mii.cpp src/apt_wrap.cpp src/hd_texture_pack.cpp src/cityhash64.cpp ${RUNTIME_FILES})
 set_target_properties(SuperMario3DLand PROPERTIES OUTPUT_NAME SuperMario3DLandRecompiled)
+if(SM3DL_EXPERIMENTAL_GEOMETRY)
+    set_property(SOURCE "${RUNTIME}/src/video/gpu/gpu.cpp"
+        APPEND PROPERTY COMPILE_DEFINITIONS SM3DL_COHERENT_ATOMIC_STENCIL_DEFAULT=1)
+endif()
 target_include_directories(SuperMario3DLand PRIVATE "${RUNTIME}/include" "${RUNTIME}/src" src "${UPSTREAM}/xbyak-df112862583c2d327c1d9782fd28f53aa675f11d")
 target_link_libraries(SuperMario3DLand PRIVATE game_code SDL3::SDL3)
 if(WIN32)

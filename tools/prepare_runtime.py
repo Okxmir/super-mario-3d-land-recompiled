@@ -495,6 +495,7 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
     };
     auto relayout = [&] {
         redraw_requested = true;
+        pica::gpu::set_wide_cinematics(s.aspect_ratio == 1);
         const bool lock_ratio = top_screen_16_by_9();
         const auto flags = SDL_GetWindowFlags(window);
         const bool windowed_lock = lock_ratio && !(flags & SDL_WINDOW_FULLSCREEN);
@@ -775,7 +776,7 @@ def filesystem(source):
                     d->entries.push_back({e.path().filename().string(), e.is_directory(ec), e.is_directory(ec) ? 0 : e.file_size(ec)});""")
     return source.replace('#include "service.h"', '#include "service.h"\n#include <SDL3/SDL.h>')
 
-def gpu(source):
+def gpu(source, experimental_geometry=True, coherent_geometry=False, audit_main=False):
     source = source.replace(
         between(source, "    // cull (mode 1 keeps clockwise", "    for (int i = 0; i < 3; i++) {\n        const float *a = v[i]->a;"),
         """    // Cull according to the winding of the visible part of the triangle.
@@ -1001,7 +1002,13 @@ void submit_commands(SDL_GPUCommandBuffer *cmd) {
         "    if (interp_this) for (auto &l : surface_loads) reloaded.push_back(l.surface);",
     )
     source = reuse_upload_buffer(source)
-    return hd_texture_gpu(course_hud_gpu(lcd_smoothing(land_lcd(source))))
+    standard = hd_texture_gpu(course_hud_gpu(lcd_smoothing(land_lcd(source))))
+    if experimental_geometry:
+        trial = transform_experiment(standard)
+        return transform_coherent_draws(trial) if coherent_geometry else trial
+    if audit_main:
+        return audit_main_renderer(standard)
+    return standard
 
 
 def hd_texture_gpu(source):
@@ -1132,7 +1139,333 @@ def lcd_smoothing(source):
     return source
 
 
+def transform_shadows(source):
+    source = source.replace('struct Surface {', '''struct Surface {
+    bool depth_uniform = false;
+    float depth_initial = 1.0f;
+    uint8_t stencil_initial = 0;''')
+    source = source.replace('        dt.clear_depth = 1.0f, dt.clear_stencil = 0;', '''        dt.clear_depth = s->depth_initial = 1.0f;
+        dt.clear_stencil = s->stencil_initial = 0;
+        s->depth_uniform = true;''')
+    source = source.replace('    if (interp_this) for (auto &l : surface_loads) reloaded.push_back(l.surface);', '''    if (interp_this) {
+        for (auto &load : surface_loads) reloaded.push_back(load.surface);
+        // A depth reload invalidates the twin even if it was already used
+        // during this frame. Otherwise stencil sees depth from an earlier pass.
+        reloaded.insert(reloaded.end(), depth_clears.begin(), depth_clears.end());
+    }''')
+    source = source.replace('    SDL_GPUCopyPass *pass = SDL_BeginGPUCopyPass(cmd);\n    for (Surface *s : copy) {', '''    std::vector<Surface *> cleared_depth;
+    SDL_GPUCopyPass *pass = nullptr;
+    for (Surface *s : copy) {''')
+    source = source.replace('        SDL_GPUTextureLocation from{}, to{};\n        from.texture = s->tex, to.texture = s->twin;', '''        s->twin_frame = frame_serial;
+        if (s->depth && s->depth_uniform) {
+            cleared_depth.push_back(s);
+            continue;
+        }
+        if (!pass) pass = SDL_BeginGPUCopyPass(cmd);
+        SDL_GPUTextureLocation from{}, to{};
+        from.texture = s->tex, to.texture = s->twin;''')
+    source = source.replace('        s->twin_frame = frame_serial;\n    }\n    SDL_EndGPUCopyPass(pass);', '''    }
+    if (pass) SDL_EndGPUCopyPass(pass);
+    for (const Surface *s : cleared_depth) {
+        SDL_GPUDepthStencilTargetInfo dt{};
+        dt.texture = s->twin;
+        dt.clear_depth = s->depth_initial;
+        dt.clear_stencil = s->stencil_initial;
+        dt.load_op = dt.stencil_load_op = SDL_GPU_LOADOP_CLEAR;
+        dt.store_op = dt.stencil_store_op = SDL_GPU_STOREOP_STORE;
+        SDL_EndGPURenderPass(SDL_BeginGPURenderPass(cmd, nullptr, 0, &dt));
+    }''')
+    source = source.replace('        d.color->drawn = true;', '''        d.color->drawn = true;
+        if (d.depth) d.depth->depth_uniform = false;''')
+    source = source.replace('            dt.clear_stencil = s->format == 3 ? uint8_t(value >> 24) : 0;', '''            dt.clear_stencil = s->format == 3 ? uint8_t(value >> 24) : 0;
+            s->depth_initial = dt.clear_depth;
+            s->stencil_initial = dt.clear_stencil;
+            s->depth_uniform = true;''')
+    source = source.replace('    unsigned hud_part = 0;', '''    unsigned hud_part = 0;
+    bool uses_stencil = false, shadow_volume = false;
+    uint8_t volume_cull = 0;
+    uint32_t volume_first = 0, volume_count = 0, icount = 0;
+    uint64_t volume_key = 0;''')
+    source = source.replace('std::vector<uint32_t> tri_ids;', 'std::vector<uint32_t> tri_ids;\nstd::vector<GpuVertex> shadow_vertices;')
+    source = source.replace('    d.pipeline = pipeline(k);', '''    d.pipeline = pipeline(k);
+    d.uses_stencil = k.has_depth && k.stencil;
+    auto arithmetic_stencil = [](uint8_t op) { return op == 3 || op == 4 || op == 6 || op == 7; };
+    d.shadow_volume = d.uses_stencil && !k.color_mask && k.stencil_write &&
+        (arithmetic_stencil(k.stencil_fail) || arithmetic_stencil(k.stencil_zfail) || arithmetic_stencil(k.stencil_zpass));
+    d.volume_cull = uint8_t(cur_cull);''')
+    source = source.replace('    d.first = uint32_t(vertices.size());', '''    d.first = uint32_t(vertices.size());
+    d.volume_first = uint32_t(shadow_vertices.size());''')
+    original_cull = between(source, '    // Cull according to the winding', '    for (int i = 0; i < 3; i++) {\n        const float *a = v[i]->a;')
+    source = source.replace(original_cull, '''    const bool save_volume = interp_this && cur.shadow_volume &&
+        cur.viewport.h > float(frontend::BOTTOM_WIDTH * cur.color->scale);
+    bool culled = false;
+''' + original_cull.replace(') return;', ') culled = true;') + '    if (culled && !save_volume) return;\n')
+    source = source.replace('        vertices.push_back(g);\n    }\n    if (interp_this) tri_ids.push_back(tri);', '''        if (save_volume) shadow_vertices.push_back(g);
+        if (!culled) vertices.push_back(g);
+    }
+    if (interp_this && !culled) tri_ids.push_back(tri);''')
+    source = source.replace('    cur.count = uint32_t(vertices.size()) - cur.first;', '''    cur.count = uint32_t(vertices.size()) - cur.first;
+    cur.volume_count = uint32_t(shadow_vertices.size()) - cur.volume_first;
+    if (cur.volume_count) cur.volume_key = shadow_key(cur);''')
+    source = source.replace('    if (cur.count) {\n        cur.tris', '    if (cur.count || cur.volume_count) {\n        cur.tris')
+    source = source.replace('void interpolate_batch() {', '#include "transform_shadow_gpu.inc"\n\nvoid interpolate_batch() {')
+    source = source.replace('        uint32_t slots = uint32_t(this_frame.slots.size());', '''        if (d.volume_count) {
+            interpolate_shadow(d, mid);
+            continue;
+        }
+        uint32_t slots = uint32_t(this_frame.slots.size());''')
+    source = source.replace('        d.ifirst = uint32_t(vertices.size() + mid.size());', '''        d.ifirst = uint32_t(vertices.size() + mid.size());
+        d.icount = d.count;''')
+    source = source.replace('        interp_stats.draws++;\n        const FrameRecord::Draw *was', '''        interp_stats.draws++;
+        // Stencil consumers/clears keep their original footprint. Closed
+        // volume writers are handled as a group by interpolate_shadow above.
+        if (d.uses_stencil) continue;
+        const FrameRecord::Draw *was''')
+    source = source.replace('    else std::swap(last_frame, this_frame);\n    this_frame.clear();', '''    else {
+        std::swap(last_frame, this_frame);
+        std::swap(last_shadow, now_shadow);
+    }
+    this_frame.clear();
+    now_shadow.clear();''')
+    source = source.replace('if (interp_on && !want) release_twins(), last_frame.clear();',
+                            'if (interp_on && !want) release_twins(), last_frame.clear(), last_shadow.clear();')
+    source = source.replace('        last_frame.clear();\n        this_frame.clear();', '''        last_frame.clear();
+        this_frame.clear();
+        last_shadow.clear();
+        now_shadow.clear();''')
+    source = source.replace('auto draw = [&](const DrawRec &d, uint32_t first, SDL_GPUTextureSamplerBinding *textures)',
+                            'auto draw = [&](const DrawRec &d, uint32_t first, uint32_t count, SDL_GPUTextureSamplerBinding *textures)')
+    source = source.replace('SDL_DrawGPUPrimitives(pass, d.count, 1, first, 0);', 'SDL_DrawGPUPrimitives(pass, count, 1, first, 0);')
+    source = source.replace('        if (d.hide_pause_title) continue;\n        if (!pass',
+                            '        if (!d.count || d.hide_pause_title) continue;\n        if (!pass')
+    source = source.replace('draw(d, d.first, tex);', 'draw(d, d.first, d.count, tex);')
+    source = source.replace('draw(d, d.ifirst, tex);', 'draw(d, d.ifirst, d.icount, tex);')
+    source = source.replace('    tri_ids.clear();', '    tri_ids.clear();\n    shadow_vertices.clear();')
+    return source
+
+
+def audit_main_renderer(source):
+    source = source.replace('LcdSmoother smoother;', 'LcdSmoother smoother;\n#include "transform_lab_gpu.inc"')
+    a = source.index('SDL_GPUTexture *top_frame(')
+    b = source.index('std::vector<SDL_GPUTexture *> take_retired_scanouts()', a)
+    scanout = source[a:b].replace('    SDL_UnlockMutex(lcd_lock);\n    return frame;',
+        '    if (frame) trial_audit.sample(frame, *width, *height, *interpolated, tick);\n'
+        '    SDL_UnlockMutex(lcd_lock);\n    return frame;', 1)
+    return source[:a] + scanout + source[b:]
+
+
+def transform_coherent_draws(source):
+    source = source.replace('#include "transform_shadow_gpu.inc"', '#include "transform_coherent_gpu.inc"')
+    source = source.replace('        if (d.viewport.h <= float(frontend::BOTTOM_WIDTH * d.color->scale)) continue;',
+        '''        // The upper framebuffer is sometimes updated through a smaller
+        // viewport. Omitting that pass leaves the previous grass/path colors
+        // in the twin even though the original image refreshed the subregion.
+        if (d.color->height != frontend::TOP_WIDTH &&
+            d.viewport.h <= float(frontend::BOTTOM_WIDTH * d.color->scale)) continue;''', 1)
+    source = source.replace('bool uses_stencil = false, shadow_volume = false;',
+                            'bool uses_stencil = false, shadow_volume = false, perspective_mesh = false, surface_geometry = false;')
+    source = source.replace('    d.volume_cull = uint8_t(cur_cull);', '''    d.volume_cull = uint8_t(cur_cull);
+    // Preserve original translucent/overlay passes. Solid receivers and
+    // complete shadow volumes share the same interpolation phase.
+    d.surface_geometry = k.has_depth && k.depth_write && k.color_mask && !d.uses_stencil;''')
+    source = source.replace('const bool save_volume = interp_this && cur.shadow_volume &&\n'
+                            '        cur.viewport.h > float(frontend::BOTTOM_WIDTH * cur.color->scale);',
+                            '''const bool save_volume = interp_this &&
+        ((cur.shadow_volume && !coherent_atomic_stencil()) || cur.surface_geometry) &&
+        (cur.color->height == frontend::TOP_WIDTH || cur.viewport.h > float(frontend::BOTTOM_WIDTH * cur.color->scale));''')
+    source = source.replace('        if (save_volume) shadow_vertices.push_back(g);', '''        if (save_volume) {
+            cur.perspective_mesh |= std::fabs(g.pos[3] - 1.0f) > 1e-4f;
+            shadow_vertices.push_back(g);
+        }''')
+    source = source.replace('    cur.volume_count = uint32_t(shadow_vertices.size()) - cur.volume_first;', '''    if (!cur.shadow_volume && !cur.perspective_mesh) shadow_vertices.resize(cur.volume_first);
+    cur.volume_count = uint32_t(shadow_vertices.size()) - cur.volume_first;''')
+    a = source.index('        uint32_t slots = uint32_t(this_frame.slots.size());', source.index('void interpolate_batch()'))
+    b = source.index('    vertices.insert(vertices.end(), mid.begin(), mid.end());', a)
+    source = source[:a] + '''        // 2D, stencil clear/tint, and particle draws can reuse the exact
+        // original vertex range in the twin without history or an upload copy.
+        if (d.uses_stencil && coherent_atomic_stencil()) {
+            static const bool announced = [] {
+                LOG("geometry: original stencil masks active on midpoint frames");
+                return true;
+            }();
+            (void)announced;
+        }
+        d.ifirst = d.first;
+        d.icount = d.count;
+        d.interpolated = d.count != 0;
+    }
+''' + source[b:]
+    return source
+
+
+def transform_experiment(source):
+    source = source.replace('#include "gpu.h"', '#include "gpu.h"\n#include <bit>')
+    source = source.replace('struct LcdFrames {', '''struct LcdFrames {
+    uint64_t generation = 0;
+    int trial_mid = -1, trial_original = -1;''')
+    source = source.replace('LcdSmoother smoother;', 'LcdSmoother smoother;\n#include "transform_lab_gpu.inc"')
+    source = source.replace('bool interp_this = false;', 'uint64_t trial_right_tick = 0;\nuint64_t trial_transfers = 0;\nbool interp_this = false;')
+    source = source.replace('void end_interp_frame() {', 'void end_interp_frame(bool right) {')
+    source = source.replace('    std::swap(last_frame, this_frame);', '''    // Keep history from the same eye. Stereo transfers may alternate even
+    // when only the left eye is displayed at 30 Hz.
+    if (right) trial_right_tick = now;
+    else std::swap(last_frame, this_frame);''')
+    source = source.replace('    bool want = interp_wanted.load();', '    bool want = trial_motion();')
+    source = source.replace('    interp_this = interp_on && cadence > 1.5f;', '''    const bool next_is_left = right || !trial_right_tick || now - trial_right_tick > 4;
+    interp_this = interp_on && next_is_left;''')
+    # The opposite eye still renders normally, but needs no midpoint history.
+    source = source.replace('if (interp_on) tri_ids', 'if (interp_this) tri_ids')
+    source = source.replace('if (interp_on) interpolate_batch();', 'if (interp_this) interpolate_batch();')
+    source = source.replace('cur.match = match_key(cur);', 'cur.match = interp_this ? match_key(cur) : 0;')
+    source = source.replace('void interpolate_batch() {\n    std::vector<GpuVertex> mid;',
+                            'void interpolate_batch() {\n    static std::vector<GpuVertex> mid;\n    mid.clear();')
+    source = source.replace('    for (uint32_t i = 0; i < count; i++) {\n        float w = v[i].pos[3];', '''    // Approximate centroid is only a tiebreaker after the mesh key matched.
+    const uint32_t stride = std::max(1u, count / 48);
+    for (uint32_t i = 0; i < count; i += stride) {
+        float w = v[i].pos[3];''')
+    source = source.replace('        int n = 0;\n        for (uint32_t v = d.first; v < d.first + d.count; v += 3) {', '''        int n = 0;
+        const uint32_t stride = 3 * std::max(1u, d.count / (3 * 48));
+        for (uint32_t v = d.first; v < d.first + d.count; v += stride) {''')
+    source = source.replace('    for (DrawRec &d : batch) {\n        uint32_t slots', '''    for (DrawRec &d : batch) {
+        if (d.viewport.h <= float(frontend::BOTTOM_WIDTH * d.color->scale)) continue;
+        uint32_t slots''')
+    source = source.replace('    SDL_GPUTexture *tex[8] = {};', '''    SDL_GPUTexture *tex[16] = {};
+    bool mid[16]{};
+    uint64_t selected_generation = 0, generation = 0;''')
+    source = source.replace('    void reset() { ready.clear(), latest = -1, priming = true; }',
+                            '    void reset() { ready.clear(), latest = -1, priming = true; selected_generation = 0; }')
+    source = source.replace('    while (q.ready.size() > q.depth)', '    while (q.ready.size() > q.depth + 2)')
+    source = source.replace('    return mix(mix(h, uint64_t(uintptr_t(d.pipeline))), regs[VS_ENTRY]);', '''    h = mix(h, regs[ATTR_BASE]);
+    h = mix(h, regs[INDEX_BUFFER]);
+    h = mix(h, regs[ATTR_LOADER]);
+    h = mix(h, regs[VERTEX_OFFSET]);
+    return mix(mix(h, uint64_t(uintptr_t(d.pipeline))), regs[VS_ENTRY]);''')
+    source = source.replace('        d.interpolated = interp_this && d.color->height != 320;',
+                            '        d.interpolated = interp_this && d.viewport.h > float(frontend::BOTTOM_WIDTH * d.color->scale);')
+    source = source.replace('        if (jumped) continue;\n        for (uint32_t v =', '''        if (!perspective || jumped) continue;
+        for (uint32_t v =''')
+    source = source.replace('            for (int k = 0; k < 3; k++)\n                lerp_vertex(', '''            bool identical_uv = true;
+            for (int k = 0; k < 3; k++) {
+                const auto &a = last_frame.verts[size_t(s) + k], &b = vertices[v + k];
+                identical_uv &= std::memcmp(a.tc01, b.tc01, sizeof(a.tc01)) == 0 &&
+                                a.tc2w[0] == b.tc2w[0] && a.tc2w[1] == b.tc2w[1];
+            }
+            if (!identical_uv) continue;
+            for (int k = 0; k < 3; k++)
+                lerp_vertex(''')
+    source = source.replace('(q.next + 1) % 8', '(q.next + 1) % int(std::size(q.tex))')
+    source = source.replace('        if (q.w != w || q.h != h) {', '''        if (q.w != w || q.h != h) {
+            for (auto &[address, frame] : lcd) frame.trial_original = frame.trial_mid = -1;''')
+    source = source.replace('out_h == frontend::TOP_WIDTH && !right_eye;', 'out_h == frontend::TOP_WIDTH;')
+    source = source.replace('    bool queue = top && interp_on;', '    bool queue = top && !right_eye && interp_on;')
+    source = source.replace('if (top) end_interp_frame();','if (top) end_interp_frame(right_eye);')
+    source = source.replace('    if (top) { // a top-screen frame is done', '''    static const bool trace = std::getenv("SM3DL_TRANSFORM_TRACE_TRANSFERS") != nullptr;
+    if (trace && top && trial_motion() && trial_transfers++ < 30)
+        LOG("prototype transfer: tick %llu output %08x hidden=%d expect-render=%d",
+            (unsigned long long)vblanks.load(), out, int(right_eye), int(interp_this));
+    if (top) { // a top-screen frame is done''')
+    source = source.replace('    if (queue) {\n        if (mid) interp_stats.mids++;', '''    f.trial_mid = qmid;
+    f.trial_original = qslot;
+    f.generation = ++q.generation;
+    if (queue) {
+        if (mid) interp_stats.mids++;''')
+    begin = source.index('        if (!interp_this) { // a frame every VBlank:')
+    end = source.index('        q.last_push', begin)
+    source = source[:begin] + '''        if (mid) q.mid[qmid] = true;
+        q.mid[qslot] = false;
+''' + source[end:]
+    source = source.replace('    advance_top_queue();\n', '')
+    source = source.replace('    const uint64_t tick = vblanks.load();\n    if (!frame)', '''    const uint64_t tick = vblanks.load();
+    if (frame && it->second.trial_original >= 0 && trial_motion()) {
+        auto &q = top_queue;
+        if (q.selected_generation != it->second.generation) {
+            q.selected_generation = it->second.generation;
+            if (it->second.trial_mid >= 0) q.ready.push_back(it->second.trial_mid);
+            else q.ready.push_back(it->second.trial_original);
+            q.ready.push_back(it->second.trial_original);
+        }
+        q.depth = 3;
+        advance_top_queue();
+        if (q.latest >= 0) {
+            frame = q.tex[q.latest];
+            *interpolated = q.mid[q.latest];
+        }
+        trial_audit.sample(frame, *width, *height, *interpolated, tick);
+        SDL_UnlockMutex(lcd_lock);
+        return frame;
+    }
+    if (top_queue.latest >= 0) top_queue.reset();
+    if (!frame)''')
+    source = source.replace('    SDL_UnlockMutex(lcd_lock);\n    return frame;', '''    if (frame) trial_audit.sample(frame, *width, *height, *interpolated, tick);
+    SDL_UnlockMutex(lcd_lock);
+    return frame;''', 1)
+    return transform_shadows(trial_bindings(source))
+
+
+def trial_bindings(source):
+    # Avoid reissuing unchanged bind commands, in the normal and extra passes.
+    begin = source.index('    SDL_GPURenderPass *pass = nullptr;\n    Surface *bc = nullptr', source.index('void flush() {'))
+    end = source.index('    if (vbuf && has_hud_draws)', begin)
+    draws = source[begin:end]
+    at = draws.index('    for (const DrawRec &d : batch) {')
+    draws = draws[:at] + '''    const DrawRec *previous = nullptr;
+    SDL_GPUTextureSamplerBinding previous_textures[4]{};
+    auto draw = [&](const DrawRec &d, uint32_t first, SDL_GPUTextureSamplerBinding *textures) {
+        if (!previous || previous->pipeline != d.pipeline) SDL_BindGPUGraphicsPipeline(pass, d.pipeline);
+        if (!previous || std::memcmp(&previous->viewport, &d.viewport, sizeof d.viewport)) SDL_SetGPUViewport(pass, &d.viewport);
+        if (!previous || std::memcmp(&previous->scissor, &d.scissor, sizeof d.scissor)) SDL_SetGPUScissor(pass, &d.scissor);
+        if (!previous || previous->stencil_ref != d.stencil_ref) SDL_SetGPUStencilReference(pass, d.stencil_ref);
+        if (!previous || std::memcmp(&previous->blend_const, &d.blend_const, sizeof d.blend_const))
+            SDL_SetGPUBlendConstants(pass, d.blend_const);
+        if (!previous) {
+            SDL_GPUBufferBinding vb{vbuf, 0};
+            SDL_BindGPUVertexBuffers(pass, 0, &vb, 1);
+        }
+        if (!previous || previous->pipeline != d.pipeline ||
+            std::memcmp(previous_textures, textures, sizeof previous_textures)) {
+            SDL_BindGPUFragmentSamplers(pass, 0, textures, 4);
+            std::memcpy(previous_textures, textures, sizeof previous_textures);
+        }
+        if (!previous || previous->pipeline != d.pipeline || std::memcmp(previous->depth_map, d.depth_map, sizeof d.depth_map))
+            SDL_PushGPUVertexUniformData(cmd, 0, d.depth_map, sizeof d.depth_map);
+        if (!previous || previous->pipeline != d.pipeline || std::memcmp(&previous->fu, &d.fu, sizeof d.fu))
+            SDL_PushGPUFragmentUniformData(cmd, 0, &d.fu, sizeof d.fu);
+        SDL_DrawGPUPrimitives(pass, d.count, 1, first, 0);
+        previous = &d;
+    };
+''' + draws[at:]
+    draws = draws.replace('        begin_render_pass(cmd, pass, bc, bd, d.color, d.depth);', '''        if (!pass || bc != d.color || bd != d.depth) previous = nullptr;
+        begin_render_pass(cmd, pass, bc, bd, d.color, d.depth);''')
+    draws = draws.replace('                pass = SDL_BeginGPURenderPass(cmd, &ct, 1, depth ? &dt : nullptr);', '''                pass = SDL_BeginGPURenderPass(cmd, &ct, 1, depth ? &dt : nullptr);
+                previous = nullptr;''')
+    for indent, first in (('        ', 'first'), ('            ', 'ifirst')):
+        a = draws.index(indent + 'SDL_BindGPUGraphicsPipeline(pass, d.pipeline);\n')
+        # Match the start of a line, not the indented tail of another block.
+        assert a == 0 or draws[a - 1] == '\n'
+        b = draws.index(indent + 'SDL_GPUTextureSamplerBinding tex[4]', a)
+        draws = draws[:a] + draws[b:]
+        a = draws.index(indent + 'SDL_BindGPUFragmentSamplers(pass, 0, tex, 4);\n')
+        marker = indent + f'SDL_DrawGPUPrimitives(pass, d.count, 1, d.{first}, 0);'
+        b = draws.index(marker, a) + len(marker)
+        draws = draws[:a] + indent + f'draw(d, d.{first}, tex);' + draws[b:]
+    return source[:begin] + draws + source[end:]
+
+
 def land_lcd(source):
+    source = source.replace('bool ok = false;', 'bool ok = false;\nstd::atomic<bool> wide_cinematics{false};')
+    source = source.replace('void end_draw() {', '''void set_wide_cinematics(bool enabled) {
+    wide_cinematics.store(enabled, std::memory_order_relaxed);
+}
+
+#include "cinema_frame_gpu.inc"
+
+void end_draw() {''')
+    source = source.replace('    cur.count = uint32_t(vertices.size()) - cur.first;', '''    cur.count = uint32_t(vertices.size()) - cur.first;
+    if (is_cinema_frame(cur)) {
+        vertices.resize(cur.first);
+        if (interp_on) tri_ids.resize(tri_ids.size() - cur.count / 3);
+        return;
+    }''')
     source = source.replace(
         '    int sx0 = 0, sy0 = 0, sx1 = int(w) - 1, sy1 = int(h) - 1 + 2 * m;',
         '''    // Both LCDs reuse the same render target, but the lower LCD has a
@@ -1750,7 +2083,7 @@ def applets(source):
         case 0x004B:""")
 
 
-def prepare(upstream, output):
+def prepare(upstream, output, experimental_geometry=True, coherent_geometry=False, audit_main=False):
     for directory in ("src", "include"):
         shutil.copytree(upstream / directory, output / directory, dirs_exist_ok=True)
     src = output / "src"
@@ -1766,7 +2099,8 @@ def prepare(upstream, output):
         "uint32_t out_w, uint32_t out_h,\n                      uint32_t flags);",
         "uint32_t out_w, uint32_t out_h,\n                      uint32_t flags, bool right_eye);").replace(
         "top_frame(int *width, int *height)", "top_frame(uint32_t address, int *width, int *height, bool *interpolated)").replace(
-        "SDL_GPUTexture *lcd_frame(", "std::vector<SDL_GPUTexture *> take_retired_scanouts();\nSDL_GPUTexture *lcd_frame("))
+        "SDL_GPUTexture *lcd_frame(", "void set_wide_cinematics(bool enabled);\n"
+        "std::vector<SDL_GPUTexture *> take_retired_scanouts();\nSDL_GPUTexture *lcd_frame("))
     edit(src / "video/pica.h", lambda source: source.replace(
         "uint32_t in_dims, uint32_t out_dims, uint32_t flags);",
         "uint32_t in_dims, uint32_t out_dims, uint32_t flags, bool right_eye = false);").replace(
@@ -1935,6 +2269,20 @@ def prepare(upstream, output):
                 LOG("graphics: %.1f top LCD updates/s (%.1f original + %.1f interpolation slots)",
                     top_updates / seconds, (top_updates - interpolated_slots) / seconds, interpolated_slots / seconds);
             frames_rendered = top_updates = interpolated_slots = 0;"""))
+    if experimental_geometry:
+        edit(src / "hle/gsp.cpp", lambda source: source.replace(
+        '''        case 0x03: // DisplayTransfer(in, out, in dims, out dims, flags)
+            pica::display_transfer(c[1], c[2], c[3], c[4], c[5]);
+            raise(PPF);
+            break;''',
+        '''        case 0x03: { // DisplayTransfer
+            const bool visible = std::find(left_eye.begin(), left_eye.end(), c[2]) != left_eye.end();
+            const bool stereo = std::find(right_eye.begin(), right_eye.end(), c[2]) != right_eye.end();
+            const bool top_copy = c[4] == (400u << 16 | 240u) && c[5] == 0x2000;
+            pica::display_transfer(c[1], c[2], c[3], c[4], c[5], c[2] && top_copy && stereo && !visible);
+            raise(PPF);
+            break;
+        }'''))
     edit(src / "video/color.h", lambda source: source.replace(
         "inline uint32_t fb_bpp(uint32_t format)",
         """// The PICA render-target register swaps the two 16-bit format IDs used by GX and LCD.
@@ -1946,8 +2294,15 @@ inline uint32_t render_target_format(uint32_t reg) {
 }
 
 inline uint32_t fb_bpp(uint32_t format)"""))
-    edit(src / "video/gpu/gpu.cpp", gpu)
-    edit(src / "video/pica.cpp", lambda source: vertex_workers(pica(source)))
+    edit(src / "video/gpu/gpu.cpp", lambda source: gpu(source, experimental_geometry, coherent_geometry, audit_main))
+    if experimental_geometry and coherent_geometry:
+        from runpy import run_path
+        coherent_pica_fast = run_path(str(Path(__file__).with_name("coherent_pica_fast.py")))["coherent_pica_fast"]
+        coherent_timer = run_path(str(Path(__file__).with_name("coherent_timer.py")))["coherent_timer"]
+        edit(src / "video/pica.cpp", lambda source: coherent_pica_fast(vertex_workers(pica(source))))
+        edit(src / "kernel/kernel.cpp", coherent_timer)
+    else:
+        edit(src / "video/pica.cpp", lambda source: vertex_workers(pica(source)))
     edit(src / "video/raster.cpp", lambda source: source.replace(
         "cur.color_format = (regs[COLOR_FORMAT] >> 16) & 7;",
         "cur.color_format = render_target_format(regs[COLOR_FORMAT]);"))
@@ -1977,5 +2332,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("upstream", type=Path)
     parser.add_argument("output", type=Path)
+    parser.add_argument("--main-renderer", action="store_true", help="keep the main project's renderer and smoothing")
+    parser.add_argument("--coherent-geometry", action="store_true", help="reconstruct complete perspective geometry")
+    parser.add_argument("--audit-main-renderer", action="store_true", help="enable opt-in audit of canonical scanout")
     args = parser.parse_args()
-    prepare(args.upstream, args.output)
+    prepare(args.upstream, args.output, experimental_geometry=not args.main_renderer,
+            coherent_geometry=args.coherent_geometry, audit_main=args.audit_main_renderer)
