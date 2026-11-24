@@ -95,7 +95,8 @@ def rust_environment():
                 # The upstream installer splits paths containing spaces. The
                 # verified payloads already have the layout of a Rust sysroot;
                 # merge those payloads directly without running install.sh.
-                payload = f"{name}/{component}"
+                payload_name = f"rust-std-{RUST_HOST}" if component == "rust-std" else component
+                payload = f"{name}/{payload_name}"
                 try:
                     subprocess.run(["tar", "-xf", archive, "-C", prefix, "--no-same-owner",
                                     "--strip-components=2", f"--exclude={payload}/manifest.in", payload],
