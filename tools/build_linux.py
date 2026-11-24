@@ -5,6 +5,7 @@ import hashlib
 import os
 from pathlib import Path
 import platform
+import re
 import shutil
 import subprocess
 import sys
@@ -26,6 +27,14 @@ CLOCKWORK = "3047d9e990be4ac2c84174cb570dfec569c882e9"
 XBYAK = "df112862583c2d327c1d9782fd28f53aa675f11d"
 ALON = "eab11f6cc03c9df6ba06cd56af1ac28e7cf64a09"
 FONT = "f470e0c9d341db73b8a24880295d2eab4cd81660"
+RUST_RELEASE = "1.90.0"
+RUST_HOST = "x86_64-unknown-linux-gnu"
+RUST_DIST = "https://static.rust-lang.org/dist/2025-09-18"
+RUST_ARCHIVES = {
+    "rustc": "48c2a42de9e92fcae8c24568f5fe40d5734696a6f80e83cc6d46eef1a78f13c9",
+    "rust-std": "663f4ab7945b392d5e5294dec1b050a66820a20e86f084ec37eeb0f2f7ff5569",
+    "cargo": "9853db03d68578a30972e2755c89c66aec035fec641cf8f3a7117c81eec2578d",
+}
 LANGUAGES = {"en": 1, "fr": 2, "de": 3, "it": 4, "es": 5, "nl": 8, "pt": 9, "ru": 10}
 
 
@@ -49,6 +58,53 @@ def download(name, url, sha256):
             raise ValueError(f"SHA-256 mismatch for {name}")
         candidate.replace(path)
     return path
+
+
+def usable_rust(cargo, rustc):
+    if not cargo or not rustc:
+        return False
+    try:
+        for name, tool in (("cargo", cargo), ("rustc", rustc)):
+            result = subprocess.run([tool, "--version"], capture_output=True, text=True, timeout=10)
+            version = re.match(rf"{name} (\d+)\.(\d+)\.", result.stdout)
+            if result.returncode or not version or tuple(map(int, version.groups())) < (1, 90):
+                return False
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return True
+
+
+def rust_environment():
+    env = os.environ.copy()
+    cargo, rustc = shutil.which("cargo"), shutil.which("rustc")
+    if usable_rust(cargo, rustc):
+        return cargo, env
+
+    # Install only into this project; no sudo, rustup or shell-profile edits.
+    UPSTREAM.mkdir(parents=True, exist_ok=True)
+    target = BUILD / f"rust-{RUST_RELEASE}-linux-x64"
+    if not target.exists():
+        print(f"Preparing local Rust {RUST_RELEASE} and Cargo (first build only)", flush=True)
+        with tempfile.TemporaryDirectory(dir=BUILD) as workspace:
+            work = Path(workspace)
+            prefix = work / "toolchain"
+            for component, sha256 in RUST_ARCHIVES.items():
+                name = f"{component}-{RUST_RELEASE}-{RUST_HOST}"
+                archive = download(name + ".tar.xz", f"{RUST_DIST}/{name}.tar.xz", sha256)
+                subprocess.run(["tar", "-xf", archive, "-C", work], check=True)
+                subprocess.run(["sh", work / name / "install.sh", f"--prefix={prefix}",
+                                "--disable-ldconfig"], cwd=work / name, check=True)
+            if not usable_rust(prefix / "bin/cargo", prefix / "bin/rustc"):
+                raise ValueError("The local Rust tools could not run on this system. See BUILD.md.")
+            prefix.replace(target)
+    cargo, rustc = target / "bin/cargo", target / "bin/rustc"
+    if not usable_rust(cargo, rustc):
+        raise ValueError(f"The local Rust installation is not usable: {target}. See BUILD.md.")
+    print(f"Using local Rust {RUST_RELEASE} and Cargo", flush=True)
+    env["PATH"] = str(cargo.parent) + os.pathsep + env.get("PATH", "")
+    env["RUSTC"] = str(rustc)
+    env["CARGO_HOME"] = str(BUILD / "cargo-cache")
+    return cargo, env
 
 
 def github_zip(name, repo, commit, directory, sha256):
@@ -107,7 +163,7 @@ def prepare_system_resources():
         shutil.copyfile(font / "code.bcfnt", target)
 
 
-def prepare_game(args, clockwork, alon_patch):
+def prepare_game(args, clockwork, alon_patch, cargo, rust_env):
     workspace = BUILD / "linux-tools"
     workspace.mkdir(exist_ok=True)
     for name in ("Cargo.toml", "Cargo.lock"):
@@ -115,8 +171,8 @@ def prepare_game(args, clockwork, alon_patch):
     for name in ("ctrx", "recomp"):
         shutil.copytree(clockwork / "tools" / name, workspace / "tools" / name, dirs_exist_ok=True)
     python("tools/prepare_recompiler.py", clockwork / "tools/recomp/src", workspace / "tools/recomp/src")
-    subprocess.run(["cargo", "build", "--locked", "--release", "--target-dir", workspace / "target"],
-                   cwd=workspace, check=True)
+    subprocess.run([cargo, "build", "--locked", "--release", "--target-dir", workspace / "target"],
+                   cwd=workspace, env=rust_env, check=True)
     tools = workspace / "target" / "release"
 
     print("Build stage: Extracting the ROM", flush=True)
@@ -208,10 +264,11 @@ def main():
     if not args.cartridge.is_file():
         parser.error(f"cartridge file not found: {args.cartridge}")
     try:
-        requirements = ("cargo", "cmake", "ninja", "ctest", "cc", "c++", "pkg-config", "tar")
+        requirements = ("cmake", "ninja", "ctest", "cc", "c++", "pkg-config", "tar")
         missing = [tool for tool in requirements if shutil.which(tool) is None]
         if missing:
-            raise ValueError(f"Missing build tools: {', '.join(missing)}. See BUILD.md.")
+            raise ValueError(f"Missing system build tools: {', '.join(missing)}. "
+                             "Install the Linux packages listed in BUILD.md; Cargo is handled automatically.")
         try:
             import PIL
             import png
@@ -230,11 +287,12 @@ def main():
 
 def run_build(args):
     print("Build stage: Preparing dependencies", flush=True)
+    cargo, rust_env = rust_environment()
     clockwork = prepare_dependencies()
     alon_patch = download("alon-60fps-0.2-preview.ips",
                           f"https://raw.githubusercontent.com/AlonBorodAHub/mario-3d-land-60fps/{ALON}/patch/code.ips",
                           "6cdc315748eb2eb1461ed5447bb9fdb65b195d49f4237bd760bbf5166bd2004f")
-    prepare_game(args, clockwork, alon_patch)
+    prepare_game(args, clockwork, alon_patch, cargo, rust_env)
     print("Build stage: Preparing game resources", flush=True)
     prepare_system_resources()
     print("Build stage: Compiling the game", flush=True)

@@ -4,6 +4,7 @@
 
 #include <SDL3/SDL_events.h>
 #include <algorithm>
+#include <atomic>
 #include <cstdint>
 
 namespace sm3dl {
@@ -48,21 +49,54 @@ struct CourseHudBounds {
     }
 };
 
-struct ReserveTap {
-    void press(SDL_GamepadButton button, bool in_course, uint64_t now) {
-        if (button == SDL_GAMEPAD_BUTTON_DPAD_UP && in_course) held_until = now + 110;
+// A lower-screen transfer may omit transient HUD draws. Do not lose the
+// shortcut during a short partial update, but block immediately on pause.
+struct CourseTouchReadiness {
+    void publish(bool full_hud, bool paused) {
+        if (paused) grace = 0;
+        else if (full_hud) grace = 5;
+        else if (grace) --grace;
+        ready.store(grace != 0, std::memory_order_relaxed);
     }
 
-    void apply(frontend::Input &input, bool in_course, uint64_t now) {
-        if (!in_course || input.touching) held_until = 0;
-        if (now >= held_until) return;
+    bool active() const { return ready.load(std::memory_order_relaxed); }
+
+private:
+    unsigned grace = 0;
+    std::atomic<bool> ready{false};
+};
+
+struct ReserveTap {
+    static constexpr unsigned samples = 7; // more than three original 30 Hz game updates
+
+    void press(SDL_GamepadButton button, bool in_course, uint64_t now) {
+        if (button == SDL_GAMEPAD_BUTTON_DPAD_UP && in_course && !pending_until && !remaining)
+            pending_until = now + 350;
+    }
+
+    // Called from the guest's 60 Hz HID sampler, not the host's render loop.
+    // A late or duplicate host frame must never shorten or discard the tap.
+    void sample(frontend::Input &input, bool in_course, uint64_t now) {
+        if (!in_course) pending_until = remaining = 0;
+        if (pending_until && now >= pending_until) pending_until = 0;
+        if (input.touching) {
+            remaining = 0; // never overwrite an actual touchscreen press
+            return;
+        }
+        if (pending_until) {
+            pending_until = 0;
+            remaining = samples;
+        }
+        if (!remaining) return;
+        --remaining;
         input.touching = true;
         input.touch_x = reserve_x;
         input.touch_y = reserve_y;
     }
 
 private:
-    uint64_t held_until = 0;
+    uint64_t pending_until = 0;
+    unsigned remaining = 0;
 };
 
 } // namespace sm3dl

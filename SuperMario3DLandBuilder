@@ -2,4 +2,14 @@
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$root/source/tools/linux_builder.py" && -f "$root/source/build.sh" ]]; then
+    root="$root/source"
+elif [[ ! -f "$root/tools/linux_builder.py" ]]; then
+    printf '%s\n' 'Builder files are missing. Extract the whole Linux .tar.gz with its folders intact.' >&2
+    exit 1
+fi
+if ! command -v python3 >/dev/null 2>&1; then
+    printf '%s\n' 'Python 3 is required. Install the Linux packages listed in BUILD.md.' >&2
+    exit 1
+fi
 exec python3 "$root/tools/linux_builder.py" "$@"

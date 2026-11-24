@@ -40,14 +40,14 @@ Open `dist/SuperMario3DLandRecompiled.exe` when the build completes. The first b
 
 ### Linux x86-64
 
-Install the Linux dependencies in the [build guide](BUILD.md#linux-x86-64), open a terminal in the project folder, and run the following commands.
+Install the system dependencies in the [build guide](BUILD.md#linux-x86-64). Rust and Cargo are set up automatically if needed. For a Git checkout, open a terminal in the project folder and run:
 
 ```bash
-bash build.sh --cartridge "YourRom.3ds" --language en
+bash build.sh --cartridge "YourRom.3ds" --language en &&
 ./dist/linux-x64/SuperMario3DLandRecompiled
 ```
 
-For the graphical builder, run `bash SuperMario3DLandBuilder`. It creates the game folder beside the selected ROM. Open it again to launch the game. Run `bash SuperMario3DLandBuilder --build-menu` to return to the setup menu.
+For the graphical builder, extract the Linux `.tar.gz` with its folders intact, then run `bash SuperMario3DLandBuilder` next to the `source/` folder. It creates the game folder beside the selected ROM. Open it again to launch the game, or run `bash SuperMario3DLandBuilder --build-menu` to return to setup.
 
 ## Display
 

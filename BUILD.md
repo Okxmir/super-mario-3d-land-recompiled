@@ -42,7 +42,7 @@ On first launch, decline StreetPass to play offline. The profile setup supplies 
 
 ## Linux x86-64
 
-Use a C++20 compiler, CMake 3.24 or newer, Ninja, Python 3.11 or newer with Pillow and PyPNG, and Rust 1.90 or newer with Cargo. The first build downloads pinned dependencies. Install the packages below on Ubuntu 24.04 or use your distribution's equivalents.
+Use a C++20 compiler, CMake 3.24 or newer, Ninja, and Python 3.11 or newer with Pillow and PyPNG. If a working Rust and Cargo 1.90+ are not already available, the builder downloads and verifies a local copy of both. There is no need to install Rust yourself, use `rustup`, or put `cargo` in `tools`. The first build needs internet access. Install the other packages below on Ubuntu 24.04, or use your distribution's equivalents.
 
 ```bash
 sudo apt update
@@ -53,18 +53,18 @@ sudo apt install build-essential cmake ninja-build pkg-config ca-certificates \
   libpulse-dev libvulkan-dev
 ```
 
-Use [rustup](https://rustup.rs/) if your distribution's Rust version is older than 1.90. Install the Vulkan driver for your GPU for hardware rendering.
+Install the Vulkan driver for your GPU for hardware rendering.
 
 Open a terminal in the project folder and run the build using a decrypted European ROM (`CTR-P-AREP`) in `.3ds`, `.cci`, or `.cxi` format.
 
 ```bash
-bash build.sh --cartridge "YourRom.3ds" --language en
+bash build.sh --cartridge "YourRom.3ds" --language en &&
 ./dist/linux-x64/SuperMario3DLandRecompiled
 ```
 
-Use `--language en`, `fr`, `de`, `es`, `it`, `nl`, `pt`, or `ru`. Omit the option to keep a saved language preference. The build runs the same six tests as the Windows build. It writes the executable and required local files to `dist/linux-x64`. Keep the files together. Saves and display preferences are stored in `userdata` beside the executable.
+Use `--language en`, `fr`, `de`, `es`, `it`, `nl`, `pt`, or `ru`. Omit the option to keep a saved language preference. The build runs the same tests as the Windows build. It writes the executable and required local files to `dist/linux-x64`. Keep the files together. Saves and display preferences are stored in `userdata` beside the executable.
 
-For the graphical builder, run `bash SuperMario3DLandBuilder` from the project or extracted builder folder. Choose the ROM and language, then click **Build**. The builder shows progress and estimates the remaining time once enough compilation steps have finished. When the build completes, run the builder again to launch the game. Use `bash SuperMario3DLandBuilder --build-menu` to return to the ROM and language selector. The game directory is created beside the ROM. The builder writes a log to `build/linux-builder.log`.
+For the graphical builder, extract the whole Linux `.tar.gz` using **Extract Here** or `tar -xzf Super-Mario-3D-Land-Linux-x64-Builder.tar.gz`. Leave `source/` beside `SuperMario3DLandBuilder`. Run `bash SuperMario3DLandBuilder` from that folder (or from a Git checkout). Choose the ROM and language, then click **Build**. When the build completes, run the builder again to launch the game. Use `bash SuperMario3DLandBuilder --build-menu` to return to setup. The game directory is created beside the ROM. The builder writes a log to `source/build/linux-builder.log` (or `build/linux-builder.log` in a Git checkout).
 
 Each build uses up to four parallel compile jobs by default. Set `CMAKE_BUILD_PARALLEL_LEVEL=2` if you need to reduce compiler memory use. **F4** cycles through the upscaling options with Vulkan, **F7** switches aspect ratios, and **F9** switches the upper-screen layout.
 

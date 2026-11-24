@@ -41,7 +41,8 @@ else()
     set(DXC "${UPSTREAM}/dxc-linux-1.8.2505.1/bin/dxc")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    tools/prepare_runtime.py tools/alon_runtime.py tools/display_options.py tools/coherent_pica_fast.py tools/coherent_timer.py)
+    tools/prepare_runtime.py tools/alon_runtime.py tools/display_options.py tools/reserve_runtime.py
+    tools/coherent_pica_fast.py tools/coherent_timer.py)
 execute_process(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/alon_runtime.py"
             "${UPSTREAM}/clockwork-master/runtime" "${RUNTIME}"

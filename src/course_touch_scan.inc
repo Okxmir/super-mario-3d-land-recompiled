@@ -3,7 +3,7 @@ struct CourseTouchScan {
     sm3dl::CourseHudBounds bounds;
     unsigned parts = 0, pause_rows = 0, vertex_count = 0;
     bool tracking = false, pause_dialog = false, was_paused = false;
-    std::atomic<bool> ready{false};
+    sm3dl::CourseTouchReadiness readiness;
 
     void begin() {
         const unsigned count = regs[VERTEX_COUNT];
@@ -37,8 +37,7 @@ struct CourseTouchScan {
 
     void publish() {
         was_paused = pause_rows == 7 || pause_dialog;
-        ready.store(!was_paused && (parts & sm3dl::course_hud_parts) == sm3dl::course_hud_parts,
-                    std::memory_order_relaxed);
+        readiness.publish((parts & sm3dl::course_hud_parts) == sm3dl::course_hud_parts, was_paused);
         parts = pause_rows = 0;
         pause_dialog = false;
     }

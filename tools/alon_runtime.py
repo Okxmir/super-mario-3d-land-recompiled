@@ -7,6 +7,7 @@ from coherent_pica_fast import coherent_pica_fast
 from coherent_timer import coherent_timer
 from display_options import frontend_options, settings_options, settings_fields, texture_options
 from prepare_runtime import edit, prepare
+from reserve_runtime import reserve_frontend, reserve_pica
 
 
 def alon_loader(source):
@@ -166,7 +167,8 @@ def main():
     edit(src / 'video/gpu/gpu.cpp', texture_options)
     edit(src / 'frontend/settings.h', settings_fields)
     edit(src / 'frontend/settings.cpp', settings_options)
-    edit(src / 'frontend/sdl.cpp', frontend_options)
+    edit(src / 'frontend/sdl.cpp', lambda source: reserve_frontend(frontend_options(source)))
+    edit(src / 'video/pica.cpp', reserve_pica)
     edit(src / 'video/gpu/gpu.h', lambda source: source.replace('SDL_GPUTexture *top_frame(',
         'void remember_alon_top_buffer(uint32_t address);\nSDL_GPUTexture *top_frame(', 1))
     edit(src / 'hle/gsp.cpp', alon_gsp)
