@@ -8,6 +8,7 @@ An experimental native Windows x64 and Linux x86-64 port of Super Mario 3D Land.
 - Original 30 Hz gameplay, with a saved choice of original 30 FPS rendering or native ARM rendering targeting 60 FPS on the upper screen. Restart to apply the FPS selection.
 - 1×, 2×, and 4× upscaling with a saved selection. Use the **Upscaling** menu on Windows or **F4** on Linux.
 - Optional [1080p and 4K texture packs by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd). The graphical builders offer separate checkboxes. The 1080p box starts checked; 4K is opt-in. With Vulkan, choose **None**, **1080p**, or **4K** from **HD** on Windows, or cycle through installed packs with **Ctrl+F10** on Linux.
+  For a [manual install](BUILD.md#manual-texture-installation), put the extracted texture PNGs in `userdata/hd-textures/sm3dl-1080p-1.2.0b/` or `userdata/hd-textures/sm3dl-4k-1.2.0b/` beside the game executable. In-game HD options are available only for complete packs.
 - The mouse cursor hides over the game after seven seconds of inactivity and reappears when the mouse moves or clicks.
 - Original (5:3), 16:9, and experimental 21:9 aspect ratios. Use **F7** or the localized **Aspect ratio** menu on Windows. The selected format is saved between launches.
 - Maximizing **16:9 Widescreen** extends the 3D view to fill the wider window while keeping the title bar and menus visible. **F11** switches to exact 16:9 fullscreen without bars on a 16:9 display, without stretching the image.
@@ -47,7 +48,7 @@ bash build.sh --cartridge "YourRom.3ds" --language en &&
 ./dist/linux-x64/SuperMario3DLandRecompiled
 ```
 
-For the graphical builder, extract the Linux `.tar.gz` with its folders intact, then run `bash SuperMario3DLandBuilder` next to the `source/` folder. It creates the game folder beside the selected ROM. Open it again to launch the game, or run `bash SuperMario3DLandBuilder --build-menu` to return to setup.
+For the graphical builder, extract the Linux `.tar.gz` with its folders intact, then run `bash SuperMario3DLandBuilder` next to the `source/` folder. After installing the listed system packages, you only need the graphical builder; it creates the game folder beside the selected ROM. Open it again to launch the game, or run `bash SuperMario3DLandBuilder --build-menu` to return to setup.
 
 ## Display
 

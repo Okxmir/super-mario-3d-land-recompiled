@@ -64,12 +64,24 @@ bash build.sh --cartridge "YourRom.3ds" --language en &&
 
 Use `--language en`, `fr`, `de`, `es`, `it`, `nl`, `pt`, or `ru`. Omit the option to keep a saved language preference. The build runs the same tests as the Windows build. It writes the executable and required local files to `dist/linux-x64`. Keep the files together. Saves and display preferences are stored in `userdata` beside the executable.
 
-For the graphical builder, extract the whole Linux `.tar.gz` using **Extract Here** or `tar -xzf Super-Mario-3D-Land-Linux-x64-Builder.tar.gz`. Leave `source/` beside `SuperMario3DLandBuilder`. Run `bash SuperMario3DLandBuilder` from that folder (or from a Git checkout). Choose the ROM and language, then click **Build**. When the build completes, run the builder again to launch the game. Use `bash SuperMario3DLandBuilder --build-menu` to return to setup. The game directory is created beside the ROM. The builder writes a log to `source/build/linux-builder.log` (or `build/linux-builder.log` in a Git checkout).
+For the graphical builder, extract the whole Linux `.tar.gz` using **Extract Here** or `tar -xzf Super-Mario-3D-Land-Linux-x64-Builder.tar.gz`. Leave `source/` beside `SuperMario3DLandBuilder`. Run `bash SuperMario3DLandBuilder` from that folder (or from a Git checkout). Choose the ROM, language and optional texture packs, then click **Build**. Once the system packages above are installed, the builder handles the rest: you do not need to run the terminal build separately. Paths containing spaces, such as `Super Mario 3D Land`, are supported. When the build completes, run the builder again to launch the game. Use `bash SuperMario3DLandBuilder --build-menu` to return to setup. The game directory is created beside the ROM. The builder writes a log to `source/build/linux-builder.log` (or `build/linux-builder.log` in a Git checkout).
 
 Each build uses up to four parallel compile jobs by default. Set `CMAKE_BUILD_PARALLEL_LEVEL=2` if you need to reduce compiler memory use. **F4** cycles through the upscaling options with Vulkan, **F7** switches aspect ratios, and **F9** switches the upper-screen layout.
 
 ## Optional HD textures
 
-The graphical Windows and Linux builders offer the [1080p and 4K texture packs by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd). **Install HD textures (1080p, 107 MB)** starts checked; **Install 4K textures (184 MB)** starts unchecked. Both can be installed. The highest successfully installed selection is enabled at the end of the build. A failed download is reported without blocking the game build.
+The graphical Windows and Linux builders offer the [1080p and 4K texture packs by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd). **Install HD textures (1080p, 107 MB)** starts checked; **Install 4K textures (184 MB)** starts unchecked. Both can be installed. The downloads run after compilation, show their own percentage, and verify the ZIPs before installation. The highest successfully installed selection is enabled at the end of the build. If a download fails, the builder reports which pack failed in its log without blocking the game build. You can then install it manually without rebuilding.
 
-For an existing command-line build, run `python tools/hd_pack.py dist` on Windows or `python3 tools/hd_pack.py dist/linux-x64` on Linux. Add `--4k` to install that edition instead. Use the folder containing the game executable if you built to a custom location. The installer verifies the archive and extracts only texture PNGs, not ReShade. With Vulkan, choose **None**, **1080p**, or **4K** from **HD** on Windows or cycle through the available options with **Ctrl+F10** on Linux.
+For an existing command-line build, run `python tools/hd_pack.py dist` on Windows or `python3 tools/hd_pack.py dist/linux-x64` on Linux. Add `--4k` to install that edition instead. Use the folder containing the game executable if you built to a custom location. With Vulkan, choose **None**, **1080p**, or **4K** from **HD** on Windows or cycle through the available options with **Ctrl+F10** on Linux. A missing or incomplete pack cannot be selected.
+
+### Manual texture installation
+
+1. Close the game. Download the v1.2.0b [1080p ZIP](https://drive.google.com/file/d/1J0aEd7K6DUkNHcYsU42SBmxpNcZpC2Wd/view) or [4K ZIP](https://drive.google.com/file/d/1EG2kf2-_i1k5VCN9foHnS6DkQtdwz80Y/view), then extract it.
+2. In the extracted pack, find `0004000000054000`. Copy its 297 `tex1_…_mip0.png` files directly into one of the folders below, **next to the game executable**, not next to the builder. Create the folders if needed. Do not copy the ZIP, the `0004000000054000` folder itself, or any ReShade files.
+
+   - **1080p:** `userdata/hd-textures/sm3dl-1080p-1.2.0b/`
+   - **4K:** `userdata/hd-textures/sm3dl-4k-1.2.0b/`
+
+3. Start the game and select the pack in **HD** on Windows or with **Ctrl+F10** on Linux. No rebuild is needed.
+
+If Python is available, you can also install the downloaded ZIP from the project's `source` directory with `python tools/hd_pack.py "GameFolder" --archive "Textures.zip" --4k` (use `python3` on Linux and omit `--4k` for 1080p). This verifies the ZIP and extracts just the texture PNGs.

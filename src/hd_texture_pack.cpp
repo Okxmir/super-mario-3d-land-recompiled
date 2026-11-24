@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <map>
 #include <memory>
 #include <string_view>
@@ -54,6 +55,9 @@ constexpr std::pair<uint64_t, uint64_t> ui_aliases[] = {
 const TextureFiles &pack_files(int quality) {
     const auto scan = [](const char *name) {
         TextureFiles index;
+        constexpr std::size_t pack_size = 297;
+        constexpr unsigned char png_signature[] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'};
+        std::size_t count = 0;
         const auto folder = platform::data_dir() / "hd-textures" / name;
         std::error_code error;
         for (auto file = std::filesystem::directory_iterator(folder, error);
@@ -64,10 +68,15 @@ const TextureFiles &pack_files(int quality) {
             unsigned long long hash;
             int end = 0;
             if (std::sscanf(reinterpret_cast<const char *>(name.c_str()), "tex1_%ux%u_%16llx_%u_mip0.png%n",
-                            &width, &height, &hash, &format, &end) == 4 && std::size_t(end) == name.size())
-                index[{width, height, format}].emplace(hash, file->path());
+                            &width, &height, &hash, &format, &end) == 4 && std::size_t(end) == name.size()) {
+                char header[24];
+                std::ifstream png(file->path(), std::ios::binary);
+                if (!png.read(header, sizeof header) || std::memcmp(header, png_signature, sizeof png_signature) ||
+                    std::memcmp(header + 12, "IHDR", 4)) return TextureFiles{};
+                if (index[{width, height, format}].emplace(hash, file->path()).second) ++count;
+            }
         }
-        return index;
+        return !error && count == pack_size ? std::move(index) : TextureFiles{};
     };
     if (quality == 1) {
         static const auto full_hd = scan("sm3dl-1080p-1.2.0b");

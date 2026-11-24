@@ -88,12 +88,20 @@ def rust_environment():
         with tempfile.TemporaryDirectory(dir=BUILD) as workspace:
             work = Path(workspace)
             prefix = work / "toolchain"
+            prefix.mkdir()
             for component, sha256 in RUST_ARCHIVES.items():
                 name = f"{component}-{RUST_RELEASE}-{RUST_HOST}"
                 archive = download(name + ".tar.xz", f"{RUST_DIST}/{name}.tar.xz", sha256)
-                subprocess.run(["tar", "-xf", archive, "-C", work], check=True)
-                subprocess.run(["sh", work / name / "install.sh", f"--prefix={prefix}",
-                                "--disable-ldconfig"], cwd=work / name, check=True)
+                # The upstream installer splits paths containing spaces. The
+                # verified payloads already have the layout of a Rust sysroot;
+                # merge those payloads directly without running install.sh.
+                payload = f"{name}/{component}"
+                try:
+                    subprocess.run(["tar", "-xf", archive, "-C", prefix, "--no-same-owner",
+                                    "--strip-components=2", f"--exclude={payload}/manifest.in", payload],
+                                   check=True)
+                except subprocess.CalledProcessError as error:
+                    raise ValueError(f"Could not unpack the local Rust component {component}.") from error
             if not usable_rust(prefix / "bin/cargo", prefix / "bin/rustc"):
                 raise ValueError("The local Rust tools could not run on this system. See BUILD.md.")
             prefix.replace(target)

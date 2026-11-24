@@ -13,7 +13,7 @@ import threading
 import time
 from pathlib import Path
 
-from hd_pack import configure_hd
+from hd_pack import configure_hd, DOWNLOAD_PROGRESS, HD_ACTIVE, HD_WARNING
 
 
 HERE = Path(__file__).resolve().parents[1]
@@ -102,10 +102,16 @@ class Progress:
         self.compile_start = None
         self.predicted = None
         self.hd_warning = False
+        self.hd_selected = None
+        self.hd_status = None
 
     def update(self, line, now):
-        if line.startswith("HD textures unavailable."):
+        if line.startswith(HD_WARNING):
             self.hd_warning = True
+        if line.startswith(HD_ACTIVE):
+            self.hd_selected = line.removeprefix(HD_ACTIVE)
+        if line.startswith(DOWNLOAD_PROGRESS):
+            self.hd_status = line.removeprefix(DOWNLOAD_PROGRESS)
         marker = "Build stage: "
         if line.startswith(marker) and (stage := line[len(marker):]) in STAGES:
             self.stage = stage
@@ -133,6 +139,8 @@ class Progress:
             eta = f"About {minutes} min remaining"
         if self.stage in ("Running tests", "Writing game files", "Installing HD textures"):
             eta = "Finishing..."
+        if self.stage == "Installing HD textures" and self.hd_status:
+            return f"Installing HD textures: {self.hd_status}\n{elapsed} elapsed"
         return f"{self.stage}\n{elapsed} elapsed  |  {eta}"
 
 
@@ -233,11 +241,14 @@ def gui(startup_error=None):
             progress["value"] = 100 if event == "done" else 0
             elapsed = round(timestamp - active.started)
             hd_warning = active.hd_warning
+            hd_selected = active.hd_selected
             active = None
             if event == "done":
                 result = f"Build complete in {elapsed // 60} min {elapsed % 60} sec."
+                if hd_selected:
+                    result += f"\nHD textures active: {hd_selected}."
                 if hd_warning:
-                    result += "\nHD download unavailable. The game uses original textures."
+                    result += "\nAn HD pack failed. See the build log or BUILD.md."
                 message.set(result + "\nReopen the builder to play.")
             else:
                 message.set(value)
