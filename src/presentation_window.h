@@ -11,6 +11,14 @@ constexpr bool is_16_by_9(int width, int height) {
     return width > 0 && height > 0 && std::int64_t(width) * 9 == std::int64_t(height) * 16;
 }
 
+// Some 16:9 displays round their width, for example 1366x768. A difference
+// of less than one pixel needs no letterbox: the wider PICA buffer already
+// has room for the exact drawable while keeping a uniform scale.
+constexpr bool pixel_rounded_16_by_9(int width, int height) {
+    const auto remainder = std::int64_t(width) * 9 - std::int64_t(height) * 16;
+    return width > 0 && height > 0 && remainder > -9 && remainder < 9;
+}
+
 struct ContentSize { int width, height; };
 
 // Snap the content, not the outer window including its menu and caption.

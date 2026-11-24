@@ -38,7 +38,7 @@ The game runs at its original 30 Hz logic. The **FPS** menu on Windows or **Ctrl
 
 Connect a gamepad and use the left stick to move. Controller mappings follow the positions of the 3DS buttons. On an Xbox controller, **A** jumps, **X** runs, and **Menu** pauses. Press **D-pad Up** or the keyboard's **Up arrow** once in a course to use the reserve item in any screen layout.
 
-On first launch, decline StreetPass to play offline. The profile setup supplies a local Player Mii.
+The game opens directly at the title screen without the StreetPass setup. The profile supplies a local Player Mii.
 
 ## Linux x86-64
 

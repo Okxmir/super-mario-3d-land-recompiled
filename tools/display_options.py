@@ -14,17 +14,23 @@ def settings_fields(source):
 
 def settings_options(source):
     source = once(source, '    bool has_aspect_ratio = false;',
-        '    bool has_aspect_ratio = false, has_hd_quality = false;\n    int legacy_hd = 0;')
+        '    bool has_aspect_ratio = false, has_hd_quality = false, widescreen_layout_v1 = false;\n    int legacy_hd = 0;')
     source = once(source, '        else if (k == "hd_textures") hd_textures = b;', '''        else if (k == "hd_textures") legacy_hd = b ? 1 : 0;
         else if (k == "hd_quality") {
             hd_quality = v == "1" ? 1 : v == "2" ? 2 : 0;
             has_hd_quality = true;
         }
-        else if (k == "fps_target") fps_target = v == "30" ? 30 : 60;''')
+        else if (k == "fps_target") fps_target = v == "30" ? 30 : 60;
+        else if (k == "widescreen_layout_version") widescreen_layout_v1 = b;''')
     source = once(source, '    if (!has_aspect_ratio) aspect_ratio = widescreen ? 1 : 0;',
-        '    if (!has_hd_quality) hd_quality = legacy_hd;\n    if (!has_aspect_ratio) aspect_ratio = widescreen ? 1 : 0;')
+        '''    if (!has_hd_quality) hd_quality = legacy_hd;
+    if (!has_aspect_ratio) aspect_ratio = widescreen ? 1 : 0;
+    // Older builds could save the Widescreen layout with the 5:3 camera.
+    // Migrate that combination once; later explicit Original selections stay saved.
+    if (!widescreen_layout_v1 && widescreen_layout() && !swap_screens && !aspect_ratio) aspect_ratio = 1;''')
     return once(source, '      << "hd_textures=" << hd_textures << "\\n"',
-        '      << "hd_quality=" << hd_quality << "\\n"\n      << "fps_target=" << fps_target << "\\n"')
+        '      << "hd_quality=" << hd_quality << "\\n"\n      << "fps_target=" << fps_target << "\\n"\n'
+        '      << "widescreen_layout_version=1\\n"')
 
 
 def texture_options(source):

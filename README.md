@@ -60,9 +60,9 @@ With Vulkan, wider formats expand the 3D view and **F7** cycles through the thre
 
 The 21:9 mode is experimental. Its wider view can reveal scenery edges or objects outside the original camera view.
 
-The aspect ratio applies to the upper game screen. Click **Widescreen** below **Original** in the **Aspect ratio** menu, or press **F9**, to show the upper screen by itself. Click the right stick (**R3**) or press **Tab** to hide the extra course indicators and show the interactive touchscreen inset in the bottom-right corner. Use **R3** or **Tab** again to hide the inset and bring back the indicators. **F9** or **Widescreen** restores the stacked layout. The layout is saved between launches, and the menu label follows the game language.
+The aspect ratio applies to the upper game screen. Click **Widescreen** below **Original** in the **Aspect ratio** menu, or press **F9**, to show the upper screen by itself. Widescreen selects **16:9** when switching from **Original** and leaves **21:9** selected if you already use it. Click the right stick (**R3**) or press **Tab** to hide the extra course indicators and show the interactive touchscreen inset in the bottom-right corner. Use **R3** or **Tab** again to hide the inset and bring back the indicators. **F9** or **Widescreen** restores the stacked layout. The layout is saved between launches, and the menu label follows the game language.
 
-The title screen, the opening cinematic, the first world map, and early gameplay in course 1-1 have been checked locally. On first launch, decline StreetPass to play offline.
+The game opens directly at the title screen without the first-launch StreetPass setup. Press **A** to select a save file. The title screen, the opening cinematic, the first world map, and early gameplay in course 1-1 have been checked locally.
 
 The ROM, compiled game files, and saves remain local. See [LICENSE](LICENSE) and the [third-party license notices](licenses/).
 

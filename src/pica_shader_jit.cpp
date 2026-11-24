@@ -1,12 +1,16 @@
 #include "pica_shader_jit.h"
 
+#include "hd_texture_pack.h"
 #include "pica_shader_decode.h"
 #include "pica_shader_flow.h"
 
+#include <algorithm>
 #include <array>
 #include <compare>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <list>
 #include <map>
 #include <memory>
 #include <unordered_map>
@@ -460,6 +464,15 @@ struct ShaderKeyHash {
     }
 };
 
+using VertexVariants = std::unordered_map<ShaderKey, std::unique_ptr<VertexEmitter>, ShaderKeyHash>;
+
+struct VertexProgram {
+    uint64_t code_hash = 0, swizzle_hash = 0;
+    std::array<uint32_t, 4096> code;
+    std::array<uint32_t, 128> swizzle;
+    VertexVariants variants;
+};
+
 } // namespace
 
 CompiledVertex find_compiled_shader(const ShaderSetup &shader, uint32_t entry, uint64_t revision) {
@@ -474,12 +487,36 @@ CompiledVertex find_compiled_shader(const ShaderSetup &shader, uint32_t entry, u
     }();
     if (!available) return nullptr;
 
+    // Uploading another PICA program is not a reason to discard the compiled
+    // code for the previous one. The same small set can alternate within one
+    // course frame. Match every code and swizzle word before reusing any code.
+    static_assert(sizeof(VertexProgram::code) == sizeof(shader.code));
+    static_assert(sizeof(VertexProgram::swizzle) == sizeof(shader.swizzle));
+    static thread_local std::list<VertexProgram> programs;
     static thread_local uint64_t last_revision = 0;
-    static thread_local std::unordered_map<ShaderKey, std::unique_ptr<VertexEmitter>, ShaderKeyHash> cache;
-    if (revision != last_revision) {
-        cache.clear();
+    static const bool legacy_cache = std::getenv("SM3DL_LEGACY_VERTEX_CACHE") != nullptr;
+    if (programs.empty() || revision != last_revision) {
+        if (legacy_cache) programs.clear(); // local A/B diagnostics
+        const uint64_t code_hash = sm3dl::texture_hash(reinterpret_cast<const char *>(shader.code), sizeof(shader.code));
+        const uint64_t swizzle_hash = sm3dl::texture_hash(reinterpret_cast<const char *>(shader.swizzle), sizeof(shader.swizzle));
+        auto found = std::find_if(programs.begin(), programs.end(), [&](const VertexProgram &p) {
+            return p.code_hash == code_hash && p.swizzle_hash == swizzle_hash &&
+                   std::memcmp(p.code.data(), shader.code, sizeof(shader.code)) == 0 &&
+                   std::memcmp(p.swizzle.data(), shader.swizzle, sizeof(shader.swizzle)) == 0;
+        });
+        if (found != programs.end()) {
+            programs.splice(programs.begin(), programs, found);
+        } else {
+            if (programs.size() == 16) programs.pop_back();
+            auto &p = programs.emplace_front();
+            p.code_hash = code_hash;
+            p.swizzle_hash = swizzle_hash;
+            std::memcpy(p.code.data(), shader.code, sizeof(shader.code));
+            std::memcpy(p.swizzle.data(), shader.swizzle, sizeof(shader.swizzle));
+        }
         last_revision = revision;
     }
+    auto &cache = programs.front().variants;
     ShaderKey key{entry, shader.b, {}};
     std::memcpy(key.integers.data(), shader.i, sizeof(shader.i));
     if (auto it = cache.find(key); it != cache.end()) {

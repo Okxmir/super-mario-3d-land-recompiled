@@ -80,7 +80,17 @@ pub fn fn_name(addr: u32) -> String {
                 assert_eq!(insn.raw, 0x0a000017);
                 writeln!(out, "    {{ extern int sm3dl_take_reserve_command(void); if (sm3dl_take_reserve_command()) ctx->z = 0; }}").unwrap();
             }
-''' + instruction)
+''' + instruction + '''
+            // TitleScene enters here after its assets and save data are ready.
+            // Z is still the result of the preceding nerve comparison: clear
+            // means the player explicitly opened StreetPass from the title.
+            // On startup, let the original state machine finish the offline
+            // path without visiting the welcome/opt-in dialogue states.
+            if insn.addr == 0x00125b1c {
+                assert_eq!(insn.raw, 0xe12fff31); // BLX r1: begin StreetPass setup
+                body = "    { uint32_t target = ctx->r[1]; ctx->r[14] = 0x00125b20u; if (ctx->z) { ctx->r[1] = 0x003f19e8u; target = 0x00280610u; } recomp_call_indirect(ctx, target); }\\n".into();
+            }
+''')
     emitter.write_text(source, encoding="utf-8")
 
 

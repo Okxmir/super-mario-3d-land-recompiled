@@ -8,6 +8,11 @@ def once(source, old, new):
 
 
 def coherent_pica_fast(source):
+    source = once(source, '#include <algorithm>', '''#include <algorithm>
+#include <bit>
+#ifdef __linux__
+#include <sched.h>
+#endif''')
     source = once(source, '// A pool of threads for parallel vertex shading:', '''// The 60 Hz trial is latency sensitive. On a hybrid Windows CPU keep
 // PICA dispatch and vertex shading on the allowed faster cores only.
 struct CoherentPerformanceSets {
@@ -21,10 +26,11 @@ const CoherentPerformanceSets &coherent_performance_sets() {
     static const auto sets = [] {
         CoherentPerformanceSets out;
 #ifdef _WIN32
-        if (std::getenv("SM3DL_COHERENT_ALL_CORES")) return out;
         const auto process = GetCurrentProcess();
         DWORD_PTR allowed = 0, system = 0;
         if (!GetProcessAffinityMask(process, &allowed, &system) || !allowed) return out;
+        out.core_count = std::popcount(allowed);
+        if (std::getenv("SM3DL_COHERENT_ALL_CORES")) return out;
         PROCESSOR_NUMBER current{};
         GetCurrentProcessorNumberEx(&current);
         ULONG bytes = 0;
@@ -38,7 +44,7 @@ const CoherentPerformanceSets &coherent_performance_sets() {
         unsigned fast = 0, slow = 255;
         for (size_t offset = 0; offset + 8 <= bytes;) {
             const auto *entry = reinterpret_cast<const SYSTEM_CPU_SET_INFORMATION *>(records.data() + offset);
-            if (entry->Size < 8 || entry->Size > bytes - offset) return CoherentPerformanceSets{};
+            if (entry->Size < 8 || entry->Size > bytes - offset) return out;
             offset += entry->Size;
             if (entry->Type != CpuSetInformation || entry->Size < sizeof *entry) continue;
             const auto &cpu = entry->CpuSet;
@@ -50,12 +56,16 @@ const CoherentPerformanceSets &coherent_performance_sets() {
             slow = std::min(slow, unsigned(cpu.EfficiencyClass));
         }
         if (fast <= slow) return out; // uniform CPU or caller already restricted the process
+        CoherentPerformanceSets preferred;
         bool cores[256]{};
         for (const auto &entry : candidates) if (entry.efficiency == fast) {
-            out.ids.push_back(entry.id);
-            if (!cores[entry.core]) cores[entry.core] = true, ++out.core_count;
+            preferred.ids.push_back(entry.id);
+            if (!cores[entry.core]) cores[entry.core] = true, ++preferred.core_count;
         }
-        if (out.core_count < 2) return CoherentPerformanceSets{};
+        if (preferred.core_count >= 2) return preferred;
+#elif defined(__linux__)
+        cpu_set_t cpus;
+        if (sched_getaffinity(0, sizeof cpus, &cpus) == 0) out.core_count = unsigned(CPU_COUNT(&cpus));
 #endif
         return out;
     }();
@@ -91,7 +101,8 @@ void coherent_select_performance_cores() {
         '        job = &fn;\n        job_count = count;\n        pending.store(lanes - 1, std::memory_order_relaxed);\n'
         '        generation.fetch_add(1, std::memory_order_release);\n        generation.notify_all();',
         '''        // Small draws rarely benefit from waking all available lanes.
-        constexpr size_t group = 192;
+        // A worker wake-up can cost more than a small slice on a busy 2–4 core PC.
+        const size_t group = lanes <= 4 ? 384 : 192;
         const size_t active = std::min(size_t(lanes), (count + group - 1) / group);
         if (active < 2) return fn(0, count);
         job = &fn;

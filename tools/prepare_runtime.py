@@ -50,10 +50,10 @@ def frontend(source):
                 SDL_PushEvent(&event);
             } else if (w == "maximize") {
                 if (auto *window = SDL_GetRenderWindow(renderer)) SDL_MaximizeWindow(window);
-            } else if (w == "fullscreen") {
+            } else if (w == "fullscreen" || w == "widescreen") {
                 SDL_Event event{};
                 event.type = SDL_EVENT_KEY_DOWN;
-                event.key.scancode = SDL_SCANCODE_F11;
+                event.key.scancode = w == "fullscreen" ? SDL_SCANCODE_F11 : SDL_SCANCODE_F9;
                 if (auto *window = SDL_GetRenderWindow(renderer)) event.key.windowID = SDL_GetWindowID(window);
                 SDL_PushEvent(&event);
             } else if (w == "log") {''')
@@ -126,6 +126,8 @@ def frontend(source):
     source = source.replace("Input input() {", """int verify_aspect_ratio() {
     static_assert(sm3dl::is_16_by_9(1920, 1080) && sm3dl::is_16_by_9(2560, 1440));
     static_assert(!sm3dl::is_16_by_9(1919, 988) && !sm3dl::is_16_by_9(3440, 1440));
+    static_assert(sm3dl::pixel_rounded_16_by_9(1366, 768) && sm3dl::pixel_rounded_16_by_9(1920, 1080));
+    static_assert(!sm3dl::pixel_rounded_16_by_9(1280, 800) && !sm3dl::pixel_rounded_16_by_9(2560, 1080));
     constexpr auto fitted = sm3dl::fit_16_by_9(1919, 988);
     static_assert(sm3dl::is_16_by_9(fitted.width, fitted.height) &&
                   fitted.width <= 1919 && fitted.height <= 988);
@@ -184,12 +186,12 @@ def frontend(source):
     s.swap_screens = true;
     s.smart_layout = true;
     s.picture_in_picture = false;
-    s.aspect_ratio = 1;
+    s.aspect_ratio = 0;
     s.toggle_screen_layout();
     Layout selected;
     selected.top_width = 428.0f;
     selected.update();
-    if (!s.widescreen_layout() || s.swap_screens || s.picture_in_picture ||
+    if (!s.widescreen_layout() || s.aspect_ratio != 1 || s.swap_screens || s.picture_in_picture ||
         selected.first != 0 || !selected.shown[0] || selected.shown[1])
         fatal("F9 did not select the upper screen on its own");
     s.toggle_secondary_screen();
@@ -506,11 +508,14 @@ std::vector<SDL_GPUTexture *> retired_gpu_frames;""")
             locked_16_by_9 = windowed_lock;
         }
         int client_w = 0, client_h = 0;
-        const bool fill_window = lock_ratio && SDL_GetRenderOutputSize(renderer, &client_w, &client_h) &&
-            sm3dl::extend_maximized_16_by_9((flags & SDL_WINDOW_FULLSCREEN) != 0,
-                                          (flags & SDL_WINDOW_MAXIMIZED) != 0, client_w, client_h);
+        const bool have_output = lock_ratio && SDL_GetRenderOutputSize(renderer, &client_w, &client_h);
+        const bool fullscreen_output = (flags & SDL_WINDOW_FULLSCREEN) != 0;
+        const bool extend_camera = have_output &&
+            sm3dl::extend_maximized_16_by_9(fullscreen_output, (flags & SDL_WINDOW_MAXIMIZED) != 0, client_w, client_h);
+        const bool fill_window = extend_camera || (have_output && fullscreen_output &&
+            sm3dl::pixel_rounded_16_by_9(client_w, client_h));
         layout.window_top_width = fill_window ? float(double(client_w) * SCREEN_HEIGHT / client_h) : 0;
-        if (fill_window)
+        if (extend_camera)
             pica::set_window_top_margin(sm3dl::top_margin_for_client(client_w, client_h, TOP_WIDTH, SCREEN_HEIGHT));
         else
             pica::set_aspect_ratio(pica::gpu::active() ? s.aspect_ratio : 0);
@@ -2117,6 +2122,8 @@ def prepare(upstream, output, experimental_geometry=True, coherent_geometry=Fals
     void toggle_screen_layout() {
         single_screen = !single_screen;
         if (single_screen) {
+            if (aspect_ratio == 0) aspect_ratio = 1;
+            widescreen = aspect_ratio != 0;
             swap_screens = false;
             smart_layout = false;
             picture_in_picture = false;
