@@ -70,6 +70,17 @@ pub fn fn_name(addr: u32) -> String {
         if source.count(old) != 1:
             raise ValueError('Unexpected Clockwork emitter source')
         source = source.replace(old, new)
+    instruction = '            let mut body = self.insn(f, insn, live[i], tables.get(&insn.addr).copied());'
+    if source.count(instruction) != 1:
+        raise ValueError('Unexpected Clockwork instruction emitter')
+    source = source.replace(instruction, '''            // EUR reserve UI: at this branch the original code has already
+            // checked the widget state. Accept the PC shortcut as an alternative
+            // to the confirmed touch, then execute the original drop and UI update.
+            if f.entry == 0x0035e738 && insn.addr == 0x0035e7e4 {
+                assert_eq!(insn.raw, 0x0a000017);
+                writeln!(out, "    {{ extern int sm3dl_take_reserve_command(void); if (sm3dl_take_reserve_command()) ctx->z = 0; }}").unwrap();
+            }
+''' + instruction)
     emitter.write_text(source, encoding="utf-8")
 
 

@@ -36,7 +36,7 @@ The game uses the original 400 × 240 top screen and 320 × 240 touchscreen. Ups
 
 The game runs at its original 30 Hz logic. The **FPS** menu on Windows or **Ctrl+F6** chooses original 30 FPS rendering or the 60 FPS ARM patch. Restart to apply the choice. In 16:9 Widescreen, **F11** fills a 16:9 display without stretching the image or keeping the wider crop used for the maximized window.
 
-Connect a gamepad and use the left stick to move. Controller mappings follow the positions of the 3DS buttons. On an Xbox controller, **A** jumps, **X** runs, and **Menu** pauses. Press **D-pad Up** in a course to use the reserve item in any screen layout.
+Connect a gamepad and use the left stick to move. Controller mappings follow the positions of the 3DS buttons. On an Xbox controller, **A** jumps, **X** runs, and **Menu** pauses. Press **D-pad Up** or the keyboard's **Up arrow** once in a course to use the reserve item in any screen layout.
 
 On first launch, decline StreetPass to play offline. The profile setup supplies a local Player Mii.
 

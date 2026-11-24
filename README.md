@@ -81,7 +81,7 @@ Keyboard bindings are shown for QWERTY and follow physical key positions. Use an
 | Pause (Start) | **Enter** | **Menu** | **Options** |
 | Select | **Backspace** | **View** | **Share / Create** |
 | 3DS D-pad | **Arrow keys** | D-pad | D-pad |
-| Use the reserve item during a course | Click its slot on the touchscreen | **D-pad Up** | **D-pad Up** |
+| Use the reserve item during a course | **Up arrow** or click the reserve slot | **D-pad Up** | **D-pad Up** |
 | Touchscreen | Left mouse button on the lower screen or its inset | — | — |
 | Show or hide the touchscreen inset in Widescreen | **Tab** | **R3** (press the right stick) | **R3** (press the right stick) |
 

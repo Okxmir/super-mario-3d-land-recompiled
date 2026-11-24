@@ -37,7 +37,7 @@ struct CourseTouchScan {
 
     void publish() {
         was_paused = pause_rows == 7 || pause_dialog;
-        readiness.publish((parts & sm3dl::course_hud_parts) == sm3dl::course_hud_parts, was_paused);
+        readiness.publish(sm3dl::is_course_hud(parts), was_paused);
         parts = pause_rows = 0;
         pause_dialog = false;
     }

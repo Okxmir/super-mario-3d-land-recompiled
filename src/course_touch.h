@@ -2,9 +2,9 @@
 
 #include "frontend/frontend.h"
 
-#include <SDL3/SDL_events.h>
 #include <algorithm>
 #include <atomic>
+#include <bit>
 #include <cstdint>
 
 namespace sm3dl {
@@ -13,6 +13,12 @@ inline constexpr int reserve_x = 160, reserve_y = 131;
 inline constexpr unsigned course_lives = 1, course_reserve = 2, course_medals = 4, course_level = 8;
 inline constexpr unsigned reserve_caption = 16;
 inline constexpr unsigned course_hud_parts = course_lives | course_reserve | course_medals | course_level;
+
+constexpr bool is_course_hud(unsigned parts) {
+    // The occupied reserve can be drawn differently from the empty slot. No
+    // single HUD element is required, but the surrounding HUD identifies a course.
+    return std::popcount(parts & course_hud_parts) >= 3;
+}
 
 // The original lower LCD is rotated in PICA clip space.
 struct CourseHudBounds {
@@ -66,37 +72,29 @@ private:
     std::atomic<bool> ready{false};
 };
 
-struct ReserveTap {
-    static constexpr unsigned samples = 7; // more than three original 30 Hz game updates
-
-    void press(SDL_GamepadButton button, bool in_course, uint64_t now) {
-        if (button == SDL_GAMEPAD_BUTTON_DPAD_UP && in_course && !pending_until && !remaining)
-            pending_until = now + 350;
+struct ReserveCommand {
+    // HID samples the PC buttons. Only the native reserve UI consumes the
+    // command, on the next eligible game update; no touch is synthesized.
+    bool sample(frontend::Input &input, bool in_course, uint64_t now, bool queued_edge = false) {
+        const bool down = (input.buttons & frontend::BTN_UP) != 0;
+        const bool pressed = queued_edge || (down && !was_down);
+        was_down = down;
+        if (!in_course) {
+            pending_until.store(0, std::memory_order_relaxed);
+            return false;
+        }
+        input.buttons &= ~frontend::BTN_UP;
+        if (pressed) pending_until.store(now + 200, std::memory_order_relaxed);
+        return pressed;
     }
 
-    // Called from the guest's 60 Hz HID sampler, not the host's render loop.
-    // A late or duplicate host frame must never shorten or discard the tap.
-    void sample(frontend::Input &input, bool in_course, uint64_t now) {
-        if (!in_course) pending_until = remaining = 0;
-        if (pending_until && now >= pending_until) pending_until = 0;
-        if (input.touching) {
-            remaining = 0; // never overwrite an actual touchscreen press
-            return;
-        }
-        if (pending_until) {
-            pending_until = 0;
-            remaining = samples;
-        }
-        if (!remaining) return;
-        --remaining;
-        input.touching = true;
-        input.touch_x = reserve_x;
-        input.touch_y = reserve_y;
+    bool take(uint64_t now) {
+        return pending_until.exchange(0, std::memory_order_relaxed) > now;
     }
 
 private:
-    uint64_t pending_until = 0;
-    unsigned remaining = 0;
+    std::atomic<uint64_t> pending_until{0};
+    bool was_down = false;
 };
 
 } // namespace sm3dl
