@@ -76,7 +76,7 @@ For an existing command-line build, run `python tools/hd_pack.py dist` on Window
 
 ### Manual texture installation
 
-1. Close the game. Download the v1.2.0b [1080p ZIP](https://drive.google.com/file/d/1J0aEd7K6DUkNHcYsU42SBmxpNcZpC2Wd/view) or [4K ZIP](https://drive.google.com/file/d/1EG2kf2-_i1k5VCN9foHnS6DkQtdwz80Y/view), then extract it.
+1. Close the game. Download the v1.2.0b [1080p ZIP](https://github.com/Okxmir/super-mario-3d-land-recompiled/releases/download/v1.1.4/SM3DL.4K.1.2.0b.1080p.zip) or [4K ZIP](https://github.com/Okxmir/super-mario-3d-land-recompiled/releases/download/v1.1.4/SM3DL.4K.1.2.0b.4K.zip) from GitHub, then extract it.
 2. In the extracted pack, find `0004000000054000`. Copy its 297 `tex1_…_mip0.png` files directly into one of the folders below, **next to the game executable**, not next to the builder. Create the folders if needed. Do not copy the ZIP, the `0004000000054000` folder itself, or any ReShade files.
 
    - **1080p:** `userdata/hd-textures/sm3dl-1080p-1.2.0b/`

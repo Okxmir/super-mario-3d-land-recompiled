@@ -17,15 +17,17 @@ from zipfile import BadZipFile, ZipFile
 class Pack(NamedTuple):
     label: str
     folder: str
-    file_id: str
+    filename: str
     sha256: str
     size: int
 
 
+# Pin the assets to their release so a new game release does not move the URLs.
+PACK_RELEASE = "https://github.com/Okxmir/super-mario-3d-land-recompiled/releases/download/v1.1.4"
 PACKS = {
-    1: Pack("1080p", "sm3dl-1080p-1.2.0b", "1J0aEd7K6DUkNHcYsU42SBmxpNcZpC2Wd",
+    1: Pack("1080p", "sm3dl-1080p-1.2.0b", "SM3DL.4K.1.2.0b.1080p.zip",
             "3e395856dcc9df28406002ecec2a5112294087ae003a7494fa82c6109c03e631", 107111023),
-    2: Pack("4K", "sm3dl-4k-1.2.0b", "1EG2kf2-_i1k5VCN9foHnS6DkQtdwz80Y",
+    2: Pack("4K", "sm3dl-4k-1.2.0b", "SM3DL.4K.1.2.0b.4K.zip",
             "4f989bd08ec6379a06487d8a6a7432730e9dab305cddcfbdf5ea3496b715f759", 183771391),
 }
 TEXTURE = re.compile(r"tex1_[0-9]+x[0-9]+_[0-9a-fA-F]{16}_[0-9]+_mip0\.png")
@@ -66,21 +68,19 @@ def extract_textures(archive, destination):
 
 
 def download_pack(archive, pack, report):
-    query = f"id={pack.file_id}&export=download&confirm=t"
-    direct = f"https://drive.usercontent.google.com/download?{query}"
-    alternate = f"https://drive.google.com/uc?{query}"
+    url = f"{PACK_RELEASE}/{pack.filename}"
     last_error = None
-    for attempt, url in enumerate((direct, direct, alternate), 1):
+    for attempt in range(1, 4):
         if attempt > 1:
             time.sleep(1)
-        report(f"{DOWNLOAD_PROGRESS}{pack.label} - connecting ({attempt}/3)")
+        report(f"{DOWNLOAD_PROGRESS}{pack.label} - connecting to GitHub ({attempt}/3)")
         request = Request(url, headers={"User-Agent": "SM3DL-Builder/1.0", "Accept": "application/zip, application/octet-stream, */*"})
         try:
             digest = hashlib.sha256()
             with urlopen(request, timeout=60) as response, archive.open("wb") as output:
                 header = response.read(4)
                 if header != b"PK\x03\x04":
-                    raise ValueError("Google Drive returned a page instead of the ZIP (access or download limit).")
+                    raise ValueError("GitHub did not return the expected ZIP. Check the release asset or download it manually.")
                 digest.update(header)
                 output.write(header)
                 total, last_progress = len(header), -5
