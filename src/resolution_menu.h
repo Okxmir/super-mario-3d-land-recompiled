@@ -46,6 +46,20 @@ public:
             LOG("window: could not create the aspect ratio menu");
             return;
         }
+        hd_ = CreatePopupMenu();
+        if (!hd_ || !AppendMenuW(bar_, MF_POPUP, reinterpret_cast<UINT_PTR>(hd_), L"&HD")) {
+            if (hd_) DestroyMenu(hd_);
+            DestroyMenu(bar_);
+            bar_ = nullptr;
+            return;
+        }
+        fps_ = CreatePopupMenu();
+        if (!fps_ || !AppendMenuW(bar_, MF_POPUP, reinterpret_cast<UINT_PTR>(fps_), L"&FPS")) {
+            if (fps_) DestroyMenu(fps_);
+            DestroyMenu(bar_);
+            bar_ = nullptr;
+            return;
+        }
 
         if (!AppendMenuW(choices_, MF_STRING, first_command, scale_labels[0]) ||
             !AppendMenuW(choices_, MF_STRING, first_command + 1, scale_labels[1]) ||
@@ -54,7 +68,11 @@ public:
             !AppendMenuW(aspects_, MF_STRING, layout_command, widescreen_label()) ||
             !AppendMenuW(aspects_, MF_STRING, first_aspect + 1, L"16:9") ||
             !AppendMenuW(aspects_, MF_STRING, first_aspect + 2, ultrawide_label()) ||
-            !AppendMenuW(bar_, MF_STRING, hd_command, L"&HD") ||
+            !AppendMenuW(hd_, MF_STRING, first_hd, hd_labels[0]) ||
+            !AppendMenuW(hd_, MF_STRING, first_hd + 1, hd_labels[1]) ||
+            !AppendMenuW(hd_, MF_STRING, first_hd + 2, hd_labels[2]) ||
+            !AppendMenuW(fps_, MF_STRING, first_fps, fps_labels[0]) ||
+            !AppendMenuW(fps_, MF_STRING, first_fps + 1, fps_labels[1]) ||
             !SetWindowSubclass(hwnd_, window_proc, subclass_id, reinterpret_cast<DWORD_PTR>(this))) {
             DestroyMenu(bar_);
             bar_ = choices_ = aspects_ = nullptr;
@@ -65,7 +83,7 @@ public:
         title.fMask = MIIM_FTYPE | MIIM_DATA;
         title.fType = MFT_OWNERDRAW;
         title.dwItemData = reinterpret_cast<ULONG_PTR>(this);
-        for (UINT i = 0; i < 3; ++i) {
+        for (UINT i = 0; i < 4; ++i) {
             title.fMask |= MIIM_ID;
             title.wID = first_title + i;
             SetMenuItemInfoW(bar_, i, TRUE, &title);
@@ -73,7 +91,9 @@ public:
         title.fMask &= ~MIIM_ID;
         for (UINT i = 0; i < 3; ++i) {
             SetMenuItemInfoW(choices_, i, TRUE, &title);
+            SetMenuItemInfoW(hd_, i, TRUE, &title);
         }
+        for (UINT i = 0; i < 2; ++i) SetMenuItemInfoW(fps_, i, TRUE, &title);
         for (UINT i = 0; i < 4; ++i) SetMenuItemInfoW(aspects_, i, TRUE, &title);
         update_theme();
         update_checks();
@@ -109,20 +129,37 @@ public:
         return type;
     }
 
+    static Uint32 fps_changed_event() {
+        static const Uint32 type = SDL_RegisterEvents(1);
+        return type;
+    }
+
+    static Uint32 cursor_activity_event() {
+        static const Uint32 type = SDL_RegisterEvents(1);
+        return type;
+    }
+
 private:
     static constexpr UINT_PTR subclass_id = 1;
     static constexpr UINT first_command = 0x5100;
     static constexpr UINT first_aspect = 0x5110;
     static constexpr UINT layout_command = 0x5113;
     static constexpr UINT first_title = 0x5120;
-    static constexpr UINT hd_command = first_title + 2;
+    static constexpr UINT first_hd = 0x5130;
+    static constexpr UINT first_fps = 0x5140;
     static constexpr int scales[] = {1, 2, 4};
     static constexpr const wchar_t *scale_labels[] = {L"1\u00d7", L"2\u00d7", L"4\u00d7"};
+    static constexpr const wchar_t *hd_labels[] = {L"None", L"1080p", L"4K"};
+    static constexpr const wchar_t *fps_labels[] = {L"30 FPS", L"60 FPS"};
     static constexpr wchar_t menu_label[] = L"&Upscaling";
 
     static bool is_scale(UINT item) { return item >= first_command && item < first_command + 3; }
     static bool is_aspect(UINT item) { return item >= first_aspect && item < first_aspect + 3; }
-    static bool is_choice(UINT item) { return is_scale(item) || is_aspect(item) || item == layout_command; }
+    static bool is_hd(UINT item) { return item >= first_hd && item < first_hd + 3; }
+    static bool is_fps(UINT item) { return item >= first_fps && item < first_fps + 2; }
+    static bool is_choice(UINT item) {
+        return is_scale(item) || is_aspect(item) || item == layout_command || is_hd(item) || is_fps(item);
+    }
 
     const wchar_t *aspect_title() const {
         switch (settings_.language) {
@@ -177,11 +214,21 @@ private:
             if (item == first_aspect) return original_label();
             return item == first_aspect + 1 ? L"16:9" : ultrawide_label();
         }
-        if (item == hd_command) return settings_.hd_textures && hd_available() ? L"&HD \u2713" : L"&HD";
+        if (is_hd(item)) return hd_labels[item - first_hd];
+        if (is_fps(item)) return fps_labels[item - first_fps];
+        if (item == first_title + 2) return L"&HD";
+        if (item == first_title + 3) return L"&FPS";
         return item == first_title ? menu_label : aspect_title();
     }
 
-    static bool hd_available() { return pica::gpu::active() && sm3dl::has_hd_texture_pack(); }
+    static bool hd_available(int quality) { return !quality || (pica::gpu::active() && sm3dl::has_hd_texture_pack(quality)); }
+
+    static void notify(Uint32 type) {
+        if (type == Uint32(-1)) return;
+        SDL_Event event{};
+        event.type = type;
+        SDL_PushEvent(&event);
+    }
 
     void update_theme() {
         HIGHCONTRASTW contrast{sizeof contrast};
@@ -233,7 +280,7 @@ private:
             if (previous_font) SelectObject(dc, previous_font);
             ReleaseDC(hwnd_, dc);
         }
-        const int padding = is_choice(item.itemID) ? 44 : item.itemID == hd_command ? 28 : 20;
+        const int padding = is_choice(item.itemID) ? 44 : 20;
         item.itemWidth = (bounds.right - bounds.left) + MulDiv(padding, dpi_, USER_DEFAULT_SCREEN_DPI);
         item.itemHeight = (bounds.bottom - bounds.top) + MulDiv(6, dpi_, USER_DEFAULT_SCREEN_DPI);
     }
@@ -267,10 +314,13 @@ private:
     void update_checks() const {
         const bool wide_available = pica::gpu::active();
         const int active_aspect = wide_available ? settings_.aspect_ratio : 0;
-        EnableMenuItem(bar_, hd_command, MF_BYCOMMAND | (hd_available() ? MF_ENABLED : MF_GRAYED));
+        const int active_hd = hd_available(settings_.hd_quality) ? settings_.hd_quality : 0;
+        CheckMenuRadioItem(hd_, first_hd, first_hd + 2, first_hd + active_hd, MF_BYCOMMAND);
+        CheckMenuRadioItem(fps_, first_fps, first_fps + 1, first_fps + (settings_.fps_target == 60), MF_BYCOMMAND);
         CheckMenuItem(aspects_, layout_command,
                       MF_BYCOMMAND | (settings_.single_screen ? MF_CHECKED : MF_UNCHECKED));
         for (UINT i = 0; i < 3; ++i) {
+            EnableMenuItem(hd_, first_hd + i, MF_BYCOMMAND | (hd_available(int(i)) ? MF_ENABLED : MF_GRAYED));
             CheckMenuItem(choices_, first_command + i,
                           MF_BYCOMMAND | (scales[i] == settings_.resolution ? MF_CHECKED : MF_UNCHECKED));
             CheckMenuItem(aspects_, first_aspect + i,
@@ -303,10 +353,15 @@ private:
         case WM_INITMENUPOPUP:
             menu.update_checks();
             break;
+        case WM_ENTERMENULOOP:
+            SDL_ShowCursor();
+            break;
+        case WM_EXITMENULOOP:
+            notify(cursor_activity_event());
+            break;
         case WM_MENUCHAR:
             if (reinterpret_cast<HMENU>(lparam) == menu.bar_) {
-                for (UINT i = 0; i < 3; ++i) {
-                    if (i == 2 && !hd_available()) continue;
+                for (UINT i = 0; i < 4; ++i) {
                     const wchar_t *label = menu.item_label(first_title + i);
                     const wchar_t *accelerator = std::wcschr(label, L'&');
                     if (accelerator && std::towlower(accelerator[1]) == std::towlower(LOWORD(wparam)))
@@ -332,13 +387,22 @@ private:
                     LOG("window: could not request a screen layout change: %s", SDL_GetError());
                 return 0;
             }
-            if (command == hd_command) {
-                if (hd_available()) {
-                    menu.settings_.hd_textures = !menu.settings_.hd_textures;
-                    pica::gpu::set_hd_textures(menu.settings_.hd_textures);
+            if (is_hd(command)) {
+                const int quality = int(command - first_hd);
+                if (hd_available(quality)) {
+                    menu.settings_.hd_quality = quality;
+                    pica::gpu::set_hd_textures(quality);
                     menu.settings_.save();
+                    menu.update_checks();
                     DrawMenuBar(hwnd);
                 }
+                return 0;
+            }
+            if (is_fps(command)) {
+                menu.settings_.fps_target = command == first_fps ? 30 : 60;
+                menu.settings_.save();
+                menu.update_checks();
+                notify(fps_changed_event());
                 return 0;
             }
             if (is_scale(command)) {
@@ -374,6 +438,8 @@ private:
     HMENU bar_ = nullptr;
     HMENU choices_ = nullptr;
     HMENU aspects_ = nullptr;
+    HMENU hd_ = nullptr;
+    HMENU fps_ = nullptr;
     HBRUSH menu_brush_ = nullptr;
     HFONT menu_font_ = nullptr;
     COLORREF menu_text_ = GetSysColor(COLOR_MENUTEXT);

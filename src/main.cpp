@@ -1,4 +1,5 @@
 #include "dump.h"
+#include "display_options.h"
 #include "frontend/frontend.h"
 #include "game_code.h"
 #include "kernel/kernel.h"
@@ -26,9 +27,18 @@
 #include <filesystem>
 #include <string>
 
+extern "C" const RecompEntry original_recomp_functions[];
+extern "C" const size_t original_recomp_function_count;
+
+namespace sm3dl {
+namespace { int startup_fps = 60; }
+int boot_fps() { return startup_fps; }
+void set_boot_fps(int fps) { startup_fps = fps == 30 ? 30 : 60; }
+}
+
 namespace game_code {
-const RecompEntry *functions() { return recomp_functions; }
-size_t function_count() { return recomp_function_count; }
+const RecompEntry *functions() { return sm3dl::boot_fps() == 30 ? original_recomp_functions : recomp_functions; }
+size_t function_count() { return sm3dl::boot_fps() == 30 ? original_recomp_function_count : recomp_function_count; }
 }
 
 namespace hle {
@@ -152,8 +162,9 @@ GameImage load(const char *path) {
     return load_game();
 }
 
-int verify_native_startup(const char *path) {
-    load(path);
+int verify_native_startup(const char *path, bool original) {
+    sm3dl::set_boot_fps(original ? 30 : 60);
+    const auto image = load(path);
     constexpr uint32_t entry = 0x00100000;
     const auto *first = game_code::functions();
     const auto *end = first + game_code::function_count();
@@ -161,7 +172,23 @@ int verify_native_startup(const char *path) {
         [](const RecompEntry &item, uint32_t target) { return item.addr < target; });
     if (start == end || start->addr != entry || !start->fn)
         fatal("The native startup entry point is missing");
-    std::printf("Verified the supported game code and the native entry point at 0x%08x\n", entry);
+    const auto helper = std::lower_bound(first, end, 0x00473000u,
+        [](const RecompEntry &item, uint32_t target) { return item.addr < target; });
+    const bool patched_table = helper != end && helper->addr == 0x00473000u && helper->fn;
+    const bool original_hook = mem::read32(0x0011abfc) == 0xe5900008u;
+    if (patched_table == original || original_hook != original ||
+        image.bss_size != (original ? 0x3d684u : 0x7e684u))
+        fatal("The selected ARM data and native function table do not match the FPS mode");
+    std::printf("Verified the %d FPS ARM mode and native entry point at 0x%08x\n", sm3dl::boot_fps(), entry);
+    return 0;
+}
+
+int verify_mouse_idle() {
+    sm3dl::CursorIdle cursor{50};
+    if (cursor.expired(7049) || !cursor.expired(7050)) return 1;
+    cursor.moved(8000);
+    if (cursor.expired(8000) || cursor.expired(14999) || !cursor.expired(15000)) return 1;
+    std::puts("Cursor timeout is seven seconds and resets on mouse activity");
     return 0;
 }
 
@@ -254,13 +281,14 @@ int run_game(int argc, Char **argv) {
     if (argc == 2 && option == "--verify-textures") return verify_texture_updates();
     if (argc == 2 && option == "--verify-display-colors") return verify_display_colors();
     if (argc == 2 && option == "--verify-apt-wrap") return hle::verify_apt_wrap();
-    const bool verify = argc == 3 && option == "--verify-startup";
+    if (argc == 2 && option == "--verify-mouse-idle") return verify_mouse_idle();
+    const bool verify = argc == 3 && (option == "--verify-startup" || option == "--verify-original-startup");
     if (!verify && (argc > 2 || option.starts_with("--"))) {
         std::puts("SuperMario3DLandRecompiled [path to a decrypted European ROM (.3ds, .cci, .cxi)]");
         return argc == 2 && option == "--help" ? 0 : 2;
     }
     log_cfg::init();
-    if (verify) return verify_native_startup(utf8_path(argv[2]).c_str());
+    if (verify) return verify_native_startup(utf8_path(argv[2]).c_str(), option == "--verify-original-startup");
     LOG("timing: original 30 Hz game logic");
     if (!std::getenv("SM3DL_NO_DIALOG")) {
         fatal_hook = [](const char *message) {

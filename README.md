@@ -5,9 +5,10 @@ An experimental native Windows x64 and Linux x86-64 port of Super Mario 3D Land.
 ## Current features
 
 - Native Windows x64 and Linux x86-64 executables built from the supported European ROM.
-- Original 30 Hz gameplay, with native ARM rendering targeting 60 FPS on the upper screen and a short Vulkan presentation queue.
+- Original 30 Hz gameplay, with a saved choice of original 30 FPS rendering or native ARM rendering targeting 60 FPS on the upper screen. Restart to apply the FPS selection.
 - 1×, 2×, and 4× upscaling with a saved selection. Use the **Upscaling** menu on Windows or **F4** on Linux.
-- Optional [1080p texture pack by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd). The graphical builders download and install it during the build when **Install HD textures** is checked. The option starts checked. With Vulkan, click **HD** on Windows or use **Ctrl+F10** on Linux to switch textures while playing.
+- Optional [1080p and 4K texture packs by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd). The graphical builders offer separate checkboxes. The 1080p box starts checked; 4K is opt-in. With Vulkan, choose **None**, **1080p**, or **4K** from **HD** on Windows, or cycle through installed packs with **Ctrl+F10** on Linux.
+- The mouse cursor hides over the game after seven seconds of inactivity and reappears when the mouse moves or clicks.
 - Original (5:3), 16:9, and experimental 21:9 aspect ratios. Use **F7** or the localized **Aspect ratio** menu on Windows. The selected format is saved between launches.
 - Maximizing **16:9 Widescreen** extends the 3D view to fill the wider window while keeping the title bar and menus visible. **F11** switches to exact 16:9 fullscreen without bars on a 16:9 display, without stretching the image.
 - **Widescreen** or **F9** enlarges the upper screen. During a course, Vulkan displays the three Star Medals, reserve item and lives between the coin counter and timer, with the course label in the bottom-right corner. Use **R3** or **Tab** to switch between these indicators and the touchscreen inset.
@@ -50,7 +51,7 @@ For the graphical builder, run `bash SuperMario3DLandBuilder`. It creates the ga
 
 ## Display
 
-Use the Windows **Upscaling** menu or **F4** on Linux to select 1×, 2×, or 4×. Physics and the countdown keep their original 30 Hz timing. The additional render phases come from the ARM patch, not from PC-side interpolation. Vulkan keeps a short queue so completed upper-screen renders are not lost when they arrive close together. The 60 FPS target is not a locked minimum: frame rate can dip during combat, other heavy scenes, or first-time resource loading. It does not change the touchscreen refresh rate.
+Use the Windows **Upscaling** menu or **F4** on Linux to select 1×, 2×, or 4×. Use **FPS** on Windows or **Ctrl+F6** to choose the original 30 FPS mode or the patched 60 FPS mode, then restart the game. Both modes use the original 30 Hz physics and countdown and share the same saves. The 60 FPS mode uses the patch's additional render phases and a short Vulkan presentation queue, not PC-side interpolation. Actual frame rate depends on the scene and PC. These modes do not change the touchscreen refresh rate.
 
 Both builders download and verify the upstream ARM patch, adapt it for the supported European revision, and recompile it locally. No USA ROM, Azahar installation, or separate patch installer is needed. The original ROM is not modified.
 
@@ -92,6 +93,7 @@ Keyboard bindings are shown for QWERTY and follow physical key positions. Use an
 | **F8** | Toggle the secondary-screen inset |
 | **F6** / **F5** | Toggle the adaptive layout / cycle its layout for the current scene |
 | **F11** | Toggle fullscreen manually |
-| **Ctrl+F10** (Linux) / **HD** button (Windows) | Toggle the installed HD pack with Vulkan |
+| **Ctrl+F10** (Linux) / **HD** menu (Windows) | Choose original textures or an installed HD pack with Vulkan |
+| **Ctrl+F6** / **FPS** menu (Windows) | Save the 30 or 60 FPS selection for the next launch |
 | **F10** | Start or stop texture dumping |
 | **F12** / **Shift+F12** | Save a screenshot and diagnostics / capture a short frame sequence |

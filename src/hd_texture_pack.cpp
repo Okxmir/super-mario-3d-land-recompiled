@@ -51,10 +51,10 @@ constexpr std::pair<uint64_t, uint64_t> ui_aliases[] = {
     {0xfbd7a467bd47a0d7, 0xdaddb9eb0edd35be},
 };
 
-const TextureFiles &pack_files() {
-    static const TextureFiles files = [] {
+const TextureFiles &pack_files(int quality) {
+    const auto scan = [](const char *name) {
         TextureFiles index;
-        const auto folder = platform::data_dir() / "hd-textures" / "sm3dl-1080p-1.2.0b";
+        const auto folder = platform::data_dir() / "hd-textures" / name;
         std::error_code error;
         for (auto file = std::filesystem::directory_iterator(folder, error);
              !error && file != std::filesystem::directory_iterator(); file.increment(error)) {
@@ -68,8 +68,17 @@ const TextureFiles &pack_files() {
                 index[{width, height, format}].emplace(hash, file->path());
         }
         return index;
-    }();
-    return files;
+    };
+    if (quality == 1) {
+        static const auto full_hd = scan("sm3dl-1080p-1.2.0b");
+        return full_hd;
+    }
+    if (quality == 2) {
+        static const auto ultra_hd = scan("sm3dl-4k-1.2.0b");
+        return ultra_hd;
+    }
+    static const TextureFiles none;
+    return none;
 }
 
 Surface load_rgba_png(const std::filesystem::path &path) {
@@ -145,13 +154,13 @@ SDL_Rect glyph_bounds(const SDL_Surface &surface, const FontGrid &font, std::siz
     return {left, top, right - left, bottom - top};
 }
 
-PackTexture repack_french_font(const pica::Texture &guest, uint64_t hash) {
+PackTexture repack_french_font(const pica::Texture &guest, uint64_t hash, const TextureFiles &index, int quality) {
     if (guest.width != 256 || guest.format != 11) return {};
     const auto *layout = std::find_if(std::begin(french_fonts), std::end(french_fonts),
         [&](const FontGrid &font) { return font.hash == hash && font.height == int(guest.height); });
     if (layout == std::end(french_fonts)) return {};
 
-    constexpr int scale = 4;
+    const int scale = quality == 2 ? 8 : 4;
     Surface original(SDL_CreateSurface(layout->width, layout->height, SDL_PIXELFORMAT_RGBA32),
                      SDL_DestroySurface);
     if (!original) return {};
@@ -170,8 +179,8 @@ PackTexture repack_french_font(const pica::Texture &guest, uint64_t hash) {
         for (const auto &font : pack_fonts) {
             const auto slot = font.glyphs.find(letter);
             if (slot == std::u32string_view::npos) continue;
-            const auto shape = pack_files().find({font.width, font.height, 11});
-            if (shape == pack_files().end()) continue;
+            const auto shape = index.find({font.width, font.height, 11});
+            if (shape == index.end()) continue;
             const auto file = shape->second.find(font.hash);
             if (file == shape->second.end()) continue;
             auto page = pages.find(font.hash);
@@ -197,11 +206,13 @@ PackTexture repack_french_font(const pica::Texture &guest, uint64_t hash) {
 
 } // namespace
 
-bool has_hd_texture_pack() { return !pack_files().empty(); }
+bool has_hd_texture_pack(int quality) { return !pack_files(quality).empty(); }
+
+const char *hd_quality_name(int quality) { return quality == 2 ? "4K" : quality == 1 ? "1080p" : "None"; }
 
 PackTexture load_pack_texture(const uint8_t *data, std::size_t size, uint32_t width,
-                              uint32_t height, uint32_t format) {
-    const auto &index = pack_files();
+                              uint32_t height, uint32_t format, int quality) {
+    const auto &index = pack_files(quality);
     const auto shape = index.find({width, height, format});
     const bool localized_font = width == 256 && (height == 32 || height == 64) && format == 11;
     if (index.empty() || (shape == index.end() && !localized_font)) return {};
@@ -214,7 +225,7 @@ PackTexture load_pack_texture(const uint8_t *data, std::size_t size, uint32_t wi
         guest.width = width;
         guest.height = height;
         guest.format = format;
-        return repack_french_font(guest, hash);
+        return repack_french_font(guest, hash, index, quality);
     };
     if (shape == index.end()) return localized_replacement();
     auto file = shape->second.find(hash);

@@ -41,7 +41,7 @@ else()
     set(DXC "${UPSTREAM}/dxc-linux-1.8.2505.1/bin/dxc")
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-    tools/prepare_runtime.py tools/alon_runtime.py tools/coherent_pica_fast.py tools/coherent_timer.py)
+    tools/prepare_runtime.py tools/alon_runtime.py tools/display_options.py tools/coherent_pica_fast.py tools/coherent_timer.py)
 execute_process(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/alon_runtime.py"
             "${UPSTREAM}/clockwork-master/runtime" "${RUNTIME}"
@@ -49,20 +49,25 @@ execute_process(
 )
 
 file(GLOB TRANSLATED_CODE CONFIGURE_DEPENDS "${GENERATED}/*.c")
-if(NOT TRANSLATED_CODE OR NOT EXISTS "${GENERATED}/alon_eur_payload.inc")
+set(ORIGINAL "${GENERATED}-original")
+file(GLOB ORIGINAL_CODE CONFIGURE_DEPENDS "${ORIGINAL}/*.c")
+if(NOT TRANSLATED_CODE OR NOT ORIGINAL_CODE OR NOT EXISTS "${GENERATED}/alon_eur_payload.inc")
     message(FATAL_ERROR "Prepare the game with build.cmd on Windows or build.sh on Linux")
 endif()
 add_library(game_code OBJECT ${TRANSLATED_CODE})
-target_include_directories(game_code PRIVATE "${RUNTIME}/include" "${GENERATED}")
-target_compile_definitions(game_code PRIVATE RECOMP_TRACE_CALLS)
+add_library(game_original OBJECT ${ORIGINAL_CODE})
 option(SM3DL_FAST_BUILD "Disable optimization for shorter iteration builds" ON)
-if(MSVC)
-    target_compile_options(game_code PRIVATE /bigobj /fp:precise /w
-        $<IF:$<BOOL:${SM3DL_FAST_BUILD}>,/Od,/O1>)
-else()
-    target_compile_options(game_code PRIVATE -ffp-contract=off -fwrapv -w
-        $<IF:$<BOOL:${SM3DL_FAST_BUILD}>,-O0,-O1>)
-endif()
+foreach(mode game_code game_original)
+    target_include_directories(${mode} PRIVATE "${RUNTIME}/include")
+    target_compile_definitions(${mode} PRIVATE RECOMP_TRACE_CALLS)
+    if(MSVC)
+        target_compile_options(${mode} PRIVATE /bigobj /fp:precise /w
+            $<IF:$<BOOL:${SM3DL_FAST_BUILD}>,/Od,/O1>)
+    else()
+        target_compile_options(${mode} PRIVATE -ffp-contract=off -fwrapv -w
+            $<IF:$<BOOL:${SM3DL_FAST_BUILD}>,-O0,-O1>)
+    endif()
+endforeach()
 
 set(RUNTIME_FILES
     arm_ops.c
@@ -83,7 +88,7 @@ add_executable(SuperMario3DLand src/main.cpp src/shared_font.cpp src/save_storag
 set_target_properties(SuperMario3DLand PROPERTIES OUTPUT_NAME SuperMario3DLandRecompiled)
 target_include_directories(SuperMario3DLand PRIVATE "${RUNTIME}/include" "${RUNTIME}/src" "${GENERATED}" src
     "${UPSTREAM}/xbyak-df112862583c2d327c1d9782fd28f53aa675f11d")
-target_link_libraries(SuperMario3DLand PRIVATE game_code SDL3::SDL3)
+target_link_libraries(SuperMario3DLand PRIVATE game_code game_original SDL3::SDL3)
 if(WIN32)
     target_compile_definitions(SuperMario3DLand PRIVATE NOMINMAX _CRT_SECURE_NO_WARNINGS)
     target_link_libraries(SuperMario3DLand PRIVATE ws2_32 bcrypt)
@@ -110,6 +115,9 @@ add_test(NAME cartridge_integrity
 
 add_test(NAME native_startup_routine
     COMMAND SuperMario3DLand --verify-startup "${CMAKE_CURRENT_SOURCE_DIR}/extracted/SM3DL-EUR.cxi")
+add_test(NAME original_30_fps_startup
+    COMMAND SuperMario3DLand --verify-original-startup "${CMAKE_CURRENT_SOURCE_DIR}/extracted/SM3DL-EUR.cxi")
+add_test(NAME mouse_idle_timeout COMMAND SuperMario3DLand --verify-mouse-idle)
 
 add_test(NAME etc1a4_texture_updates COMMAND SuperMario3DLand --verify-textures)
 add_test(NAME native_display_colors COMMAND SuperMario3DLand --verify-display-colors)

@@ -34,7 +34,7 @@ To use an installed toolchain, omit `-Portable`. This path requires 64-bit Pytho
 
 The game uses the original 400 × 240 top screen and 320 × 240 touchscreen. Upscaling multiplies each screen's width and height by the same factor.
 
-The game runs at its original 30 Hz logic. Vulkan interpolates the upper screen to target 60 FPS, without changing gameplay speed. If motion cannot be matched safely, the renderer may repeat a frame. In 16:9 Widescreen, **F11** fills a 16:9 display without stretching the image or keeping the wider crop used for the maximized window.
+The game runs at its original 30 Hz logic. The **FPS** menu on Windows or **Ctrl+F6** chooses original 30 FPS rendering or the 60 FPS ARM patch. Restart to apply the choice. In 16:9 Widescreen, **F11** fills a 16:9 display without stretching the image or keeping the wider crop used for the maximized window.
 
 Connect a gamepad and use the left stick to move. Controller mappings follow the positions of the 3DS buttons. On an Xbox controller, **A** jumps, **X** runs, and **Menu** pauses. Press **D-pad Up** in a course to use the reserve item in any screen layout.
 
@@ -70,6 +70,6 @@ Each build uses up to four parallel compile jobs by default. Set `CMAKE_BUILD_PA
 
 ## Optional HD textures
 
-The graphical Windows and Linux builders download and install the [1080p texture pack by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd) when **Install HD textures (1080p, 107 MB)** is checked. The box starts checked. Clear it to build without the download. If the download fails, the builder finishes with the original textures and shows a message.
+The graphical Windows and Linux builders offer the [1080p and 4K texture packs by Henriko Magnifico](https://www.henrikomagnifico.com/super-mario-3d-land-hd). **Install HD textures (1080p, 107 MB)** starts checked; **Install 4K textures (184 MB)** starts unchecked. Both can be installed. The highest successfully installed selection is enabled at the end of the build. A failed download is reported without blocking the game build.
 
-For an existing command-line build, run `python tools/hd_pack.py dist` on Windows or `python3 tools/hd_pack.py dist/linux-x64` on Linux. Use the folder containing the game executable if you built to a custom location. The installer extracts only the texture PNGs. With Vulkan, use **HD** next to **Aspect ratio** on Windows or **Ctrl+F10** on Linux to toggle the pack.
+For an existing command-line build, run `python tools/hd_pack.py dist` on Windows or `python3 tools/hd_pack.py dist/linux-x64` on Linux. Add `--4k` to install that edition instead. Use the folder containing the game executable if you built to a custom location. The installer verifies the archive and extracts only texture PNGs, not ReShade. With Vulkan, choose **None**, **1080p**, or **4K** from **HD** on Windows or cycle through the available options with **Ctrl+F10** on Linux.

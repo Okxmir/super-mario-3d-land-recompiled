@@ -64,7 +64,7 @@ def find_game():
     return None
 
 
-def build(rom, language, report, hd_textures=False):
+def build(rom, language, report, hd_textures=False, hd_4k=False):
     rom = validate_rom(rom)
     output = rom.parent / OUTPUT_NAME
     command = ["bash", HERE / "build.sh", "--cartridge", rom, "--language", language,
@@ -89,7 +89,7 @@ def build(rom, language, report, hd_textures=False):
             log.write(line + "\n")
             report(line)
 
-        configure_hd(output, hd_textures, report_hd)
+        configure_hd(output, hd_textures, report_hd, four_k=hd_4k)
         replace_text_file(LOCATION_FILE, str(output) + "\n")
     return output
 
@@ -166,11 +166,14 @@ def gui(startup_error=None):
     hd_textures = tk.BooleanVar(value=True)
     hd_option = ttk.Checkbutton(panel, text="Install HD textures (1080p, 107 MB)", variable=hd_textures)
     hd_option.grid(row=6, column=0, sticky="w", pady=(10, 0))
+    hd_4k = tk.BooleanVar(value=False)
+    hd_4k_option = ttk.Checkbutton(panel, text="Install 4K textures (184 MB)", variable=hd_4k)
+    hd_4k_option.grid(row=7, column=0, sticky="w")
     progress = ttk.Progressbar(panel, maximum=100)
-    progress.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(18, 8))
+    progress.grid(row=8, column=0, columnspan=2, sticky="ew", pady=(18, 8))
     message = tk.StringVar(value=startup_error or "The game folder will be created beside the ROM.")
     tk.Label(panel, textvariable=message, bg="#16231e", fg="#eef8ee", justify="left", anchor="w",
-             wraplength=355, width=49, height=4).grid(row=8, column=0, sticky="w")
+             wraplength=355, width=49, height=4).grid(row=9, column=0, sticky="w")
 
     updates = queue.Queue()
     active = None
@@ -196,15 +199,17 @@ def gui(startup_error=None):
         active = Progress()
         filename, selected = Path(rom.get()), LANGUAGES[language.get()]
         install_hd = hd_textures.get()
+        install_4k = hd_4k.get()
         browse.configure(state="disabled")
         languages.configure(state="disabled")
         hd_option.configure(state="disabled")
+        hd_4k_option.configure(state="disabled")
         button.configure(text="Build 0%", state="disabled")
 
         def run():
             try:
                 output = build(filename, selected, lambda line: updates.put(("line", line, time.monotonic())),
-                               hd_textures=install_hd)
+                               hd_textures=install_hd, hd_4k=install_4k)
             except (OSError, ValueError) as error:
                 updates.put(("error", str(error), time.monotonic()))
             else:
@@ -223,6 +228,7 @@ def gui(startup_error=None):
             browse.configure(state="normal")
             languages.configure(state="readonly")
             hd_option.configure(state="normal")
+            hd_4k_option.configure(state="normal")
             button.configure(text="Build 100%" if event == "done" else "Build", state="normal")
             progress["value"] = 100 if event == "done" else 0
             elapsed = round(timestamp - active.started)
@@ -244,7 +250,7 @@ def gui(startup_error=None):
     browse = ttk.Button(panel, text="Browse...", command=choose)
     browse.grid(row=3, column=1, padx=(8, 0))
     button = ttk.Button(panel, text="Build", command=start, state="disabled")
-    button.grid(row=8, column=1, sticky="e", padx=(8, 0))
+    button.grid(row=9, column=1, sticky="e", padx=(8, 0))
     window.protocol("WM_DELETE_WINDOW", lambda: window.iconify() if active is not None else window.destroy())
     browse.focus_set()
     window.mainloop()
@@ -257,13 +263,15 @@ def main():
     action.add_argument("--build-menu", action="store_true", help="Open the menu to select a ROM or change the language.")
     parser.add_argument("--language", choices=LANGUAGES, default="English")
     parser.add_argument("--hd-textures", action="store_true", help="Download and install the optional 1080p textures.")
+    parser.add_argument("--hd-4k", action="store_true", help="Download and install the optional 4K textures.")
     args = parser.parse_args()
     if platform.system() != "Linux" or platform.machine() != "x86_64":
         parser.error("This builder requires Linux x86-64.")
     if args.build:
         report = print if sys.stdout is not None else lambda line: None
         try:
-            report(build(args.build, LANGUAGES[args.language], report, hd_textures=args.hd_textures) / EXE)
+            report(build(args.build, LANGUAGES[args.language], report, hd_textures=args.hd_textures,
+                         hd_4k=args.hd_4k) / EXE)
         except (OSError, ValueError) as error:
             if sys.stderr is not None:
                 print(error, file=sys.stderr)

@@ -32,9 +32,11 @@ def main():
         let method = image.u32(0x003d9444).unwrap();
         assert_eq!(method, 0x0024dcf4);
         d.add_entry(method, false);
-        // Render helpers entered through computed LR/PC jumps in the EUR patch.
-        for address in [0x003a1eb0, 0x003a1ebc, 0x003a1ef4, 0x00473000] {
-            d.add_entry(address, false);
+        // These helpers exist only in the patched European executable.
+        if image.text.addr + image.text.size == 0x003a1fe0 {
+            for address in [0x003a1eb0, 0x003a1ebc, 0x003a1ef4, 0x00473000] {
+                d.add_entry(address, false);
+            }
         }""")
     source = source.replace("        Op::Udf | Op::Bkpt(_) => Flow::Stop,",
                             "        Op::Udf | Op::Bkpt(_) if !conditional => Flow::Stop,")
@@ -44,7 +46,31 @@ def main():
     anchor = '        addr >= self.text.addr && addr < self.text.addr + self.text.size'
     if source.count(anchor) != 1:
         raise ValueError('Unexpected Clockwork text range')
-    image.write_text(source.replace(anchor, anchor + '\n            || (0x00473000..0x004730a8).contains(&addr)'), encoding="utf-8")
+    image.write_text(source.replace(anchor, anchor + '\n            || (self.text.addr + self.text.size == 0x003a1fe0'
+                                    '\n                && (0x00473000..0x004730a8).contains(&addr))'), encoding="utf-8")
+    emitter = args.output / "emit.rs"
+    source = emitter.read_text(encoding="utf-8")
+    changes = {
+        'pub fn fn_name(addr: u32) -> String {\n    format!("f_{addr:08x}")\n}': '''fn original_symbols() -> bool {
+    static ORIGINAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ORIGINAL.get_or_init(|| std::env::var_os("SM3DL_RECOMP_ORIGINAL").is_some())
+}
+
+pub fn fn_name(addr: u32) -> String {
+    if original_symbols() { format!("orig_f_{addr:08x}") } else { format!("f_{addr:08x}") }
+}''',
+        '    write_if_changed(&out_dir.join("lookup.c"), lookup.as_bytes())?;':
+            '''    if original_symbols() {
+        lookup = lookup.replace("recomp_functions", "original_recomp_functions")
+                       .replace("recomp_function_count", "original_recomp_function_count");
+    }
+    write_if_changed(&out_dir.join("lookup.c"), lookup.as_bytes())?;''',
+    }
+    for old, new in changes.items():
+        if source.count(old) != 1:
+            raise ValueError('Unexpected Clockwork emitter source')
+        source = source.replace(old, new)
+    emitter.write_text(source, encoding="utf-8")
 
 
 if __name__ == "__main__":

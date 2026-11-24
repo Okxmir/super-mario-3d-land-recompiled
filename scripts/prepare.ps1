@@ -143,8 +143,14 @@ try {
     $patchedCode = 'build/alon-eur-code'
     python tools/relocate_alon.py $alonPatch extracted/sm3dl-eur $patchedCode "$stagedCode/alon_eur_payload.inc"
     if ($LASTEXITCODE -ne 0) { throw 'Could not adapt the native 60 FPS patch for the verified European code.' }
-    & build/tools/recomp.exe emit $patchedCode $stagedCode | Tee-Object -FilePath logs/recompile.txt
-    if ($LASTEXITCODE -ne 0) { throw 'Native code generation failed.' }
+    $previousSymbols = $env:SM3DL_RECOMP_ORIGINAL
+    try {
+        $env:SM3DL_RECOMP_ORIGINAL = $null
+        & build/tools/recomp.exe emit $patchedCode $stagedCode | Tee-Object -FilePath logs/recompile.txt
+        if ($LASTEXITCODE -ne 0) { throw 'Native code generation failed.' }
+    } finally {
+        $env:SM3DL_RECOMP_ORIGINAL = $previousSymbols
+    }
     $nextFiles = Get-ChildItem -LiteralPath $stagedCode -File
     foreach ($file in $nextFiles) {
         $destination = Join-Path $generated $file.Name
@@ -153,6 +159,15 @@ try {
         }
     }
     Get-ChildItem -LiteralPath $generated -File | Where-Object { $_.Name -notin $nextFiles.Name } | Remove-Item
+    $originalCode = 'generated/sm3dl-eur-original'
+    New-Item -ItemType Directory -Path $originalCode -Force | Out-Null
+    try {
+        $env:SM3DL_RECOMP_ORIGINAL = '1'
+        & build/tools/recomp.exe emit extracted/sm3dl-eur $originalCode | Tee-Object -FilePath logs/recompile-original.txt
+        if ($LASTEXITCODE -ne 0) { throw 'Native code generation for the original 30 FPS mode failed.' }
+    } finally {
+        $env:SM3DL_RECOMP_ORIGINAL = $previousSymbols
+    }
     Write-Host 'Build stage: Preparing game resources'
     if ($resourceProcess) {
         $resourceProcess.WaitForExit()

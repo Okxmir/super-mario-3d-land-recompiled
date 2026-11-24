@@ -21,6 +21,7 @@ BUILD = ROOT / "build"
 UPSTREAM = BUILD / "upstream"
 EXTRACTED = ROOT / "extracted"
 GENERATED = ROOT / "generated" / "sm3dl-eur"
+ORIGINAL = GENERATED.with_name("sm3dl-eur-original")
 CLOCKWORK = "3047d9e990be4ac2c84174cb570dfec569c882e9"
 XBYAK = "df112862583c2d327c1d9782fd28f53aa675f11d"
 ALON = "eab11f6cc03c9df6ba06cd56af1ac28e7cf64a09"
@@ -139,7 +140,8 @@ def prepare_game(args, clockwork, alon_patch):
         with tempfile.TemporaryDirectory(dir=GENERATED.parent) as output:
             patched = Path(work) / "alon-eur-code"
             python("tools/relocate_alon.py", alon_patch, code, patched, Path(output) / "alon_eur_payload.inc")
-            subprocess.run([tools / "recomp", "emit", patched, output], check=True)
+            emit_env = {key: value for key, value in os.environ.items() if key != "SM3DL_RECOMP_ORIGINAL"}
+            subprocess.run([tools / "recomp", "emit", patched, output], env=emit_env, check=True)
             generated = {file.name: file for file in Path(output).iterdir()}
             for name, file in generated.items():
                 existing = GENERATED / name
@@ -148,6 +150,9 @@ def prepare_game(args, clockwork, alon_patch):
             for file in GENERATED.glob("*.c"):
                 if file.name not in generated:
                     file.unlink()
+        ORIGINAL.mkdir(exist_ok=True)
+        subprocess.run([tools / "recomp", "emit", code, ORIGINAL],
+                       env=dict(emit_env, SM3DL_RECOMP_ORIGINAL="1"), check=True)
 
 
 def package(build, language, dist):

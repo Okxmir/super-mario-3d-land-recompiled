@@ -5,18 +5,24 @@ from pathlib import Path
 
 from coherent_pica_fast import coherent_pica_fast
 from coherent_timer import coherent_timer
+from display_options import frontend_options, settings_options, settings_fields, texture_options
 from prepare_runtime import edit, prepare
 
 
 def alon_loader(source):
     changes = {
+        '#include "loader.h"': '#include "loader.h"\n#include "display_options.h"',
         '} // namespace\n\nGameImage load_game()':
             '#include "alon_eur_payload.inc"\n} // namespace\n\nGameImage load_game()',
-        '    g.bss_size = u32(exheader, 0x3C);': '    g.bss_size = 0x7e684;',
+        '    g.bss_size = u32(exheader, 0x3C);': '    g.bss_size = sm3dl::boot_fps() == 60 ? 0x7e684 : u32(exheader, 0x3C);',
         '    LOG("loaded %s:':
-            '    mem::commit(0x00473000, mem::PAGE); // relocated glove code; preserve the original EUR routine\n'
-            '    install_alon_eur_patch();\n'
-            '    LOG("timing: Alon ARM 0.2-preview relocated for EUR; renderer uses native guest frames");\n'
+            '    if (sm3dl::boot_fps() == 60) {\n'
+            '        mem::commit(0x00473000, mem::PAGE); // relocated glove helper\n'
+            '        install_alon_eur_patch();\n'
+            '        LOG("timing: Alon ARM 0.2-preview relocated for EUR; renderer uses native guest frames");\n'
+            '    } else {\n'
+            '        LOG("timing: original ARM render path (30 FPS)");\n'
+            '    }\n'
             '    LOG("loaded %s:',
     }
     for old, new in changes.items():
@@ -27,10 +33,11 @@ def alon_loader(source):
 
 
 def alon_gsp(source):
+    source = '#include "display_options.h"\n' + source
     source = source.replace('            remember(left_eye, info[1]);',
         '            remember(left_eye, info[1]);\n            pica::gpu::remember_alon_top_buffer(info[1]);', 1)
     source = source.replace('            frames_rendered = top_updates = interpolated_slots = 0;',
-        '''            if (std::getenv("SM3DL_ALON_TRACE")) {
+        '''            if (sm3dl::boot_fps() == 60 && std::getenv("SM3DL_ALON_TRACE")) {
                 static uint32_t last_dispatch = 0, last_updates = 0;
                 const auto dispatch = mem::read32(0x00432008), updates = mem::read32(0x00432040);
                 LOG("alon: %.1f dispatch/s, %.1f simulation updates/s", (dispatch - last_dispatch) / seconds,
@@ -45,11 +52,12 @@ def alon_gsp(source):
 def alon_native_scanout(source):
     # Keep both ARM-rendered phases when they arrive in the same VBlank
     # interval, without synthesizing an image or delaying the guest IRQs.
+    source = '#include "display_options.h"\n' + source
     source = source.replace('} top_queue; // under lcd_lock', '''} top_queue; // under lcd_lock
 std::array<uint32_t, 3> native_lcd_addresses{}; // previous top-left selections, under lcd_lock
 uint32_t native_render_id = 0;''', 1)
     source = source.replace('    bool queue = top && interp_on;', '''    static const bool baseline = std::getenv("SM3DL_ALON_BASE_RENDER") != nullptr;
-    const uint32_t stamp = !baseline && top && land_top && mem::is_committed(0x00432008u) ?
+    const uint32_t stamp = sm3dl::boot_fps() == 60 && !baseline && top && land_top && mem::is_committed(0x00432008u) ?
         mem::read32(0x00432008u) : 0;
     const bool native = out && stamp && stamp != native_render_id &&
         std::find(native_lcd_addresses.begin(), native_lcd_addresses.end(), out) != native_lcd_addresses.end();
@@ -75,7 +83,7 @@ uint32_t native_render_id = 0;''', 1)
     start = source.index('SDL_GPUTexture *top_frame(')
     end = source.index('void enable_course_hud(', start)
     return source[:start] + '''void remember_alon_top_buffer(uint32_t address) {
-    if (!ok || !address) return;
+    if (sm3dl::boot_fps() != 60 || !ok || !address) return;
     SDL_LockMutex(lcd_lock);
     auto &addresses = native_lcd_addresses;
     auto match = std::find(addresses.begin(), addresses.end(), address);
@@ -88,7 +96,7 @@ uint32_t native_render_id = 0;''', 1)
 SDL_GPUTexture *top_frame(uint32_t address, int *width, int *height, bool *interpolated) {
     *interpolated = false;
     static const bool baseline = std::getenv("SM3DL_ALON_BASE_RENDER") != nullptr;
-    if (!baseline && ok) {
+    if (sm3dl::boot_fps() == 60 && !baseline && ok) {
         SDL_LockMutex(lcd_lock);
         auto &q = top_queue;
         const auto it = lcd.find(address);
@@ -155,6 +163,10 @@ def main():
     src = args.output / 'src'
     edit(src / 'loader.cpp', alon_loader)
     edit(src / 'video/gpu/gpu.cpp', alon_native_scanout)
+    edit(src / 'video/gpu/gpu.cpp', texture_options)
+    edit(src / 'frontend/settings.h', settings_fields)
+    edit(src / 'frontend/settings.cpp', settings_options)
+    edit(src / 'frontend/sdl.cpp', frontend_options)
     edit(src / 'video/gpu/gpu.h', lambda source: source.replace('SDL_GPUTexture *top_frame(',
         'void remember_alon_top_buffer(uint32_t address);\nSDL_GPUTexture *top_frame(', 1))
     edit(src / 'hle/gsp.cpp', alon_gsp)
