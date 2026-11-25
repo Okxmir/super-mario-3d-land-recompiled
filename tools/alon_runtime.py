@@ -264,6 +264,120 @@ void begin_list() {
     return source
 
 
+def protect_sampled_textures(source):
+    # Keep native and replacement resources separate. A warm HD toggle should
+    # not reload every image in the scene or retire an entire cache at once.
+    source = replace_once(source, '    uint64_t mod_hash = 0;',
+        '    unsigned missing_hd = 0; // packs that have no replacement for this fingerprint\n'
+        '    uint64_t mod_hash = 0;')
+    source = replace_once(source,
+        'std::map<std::tuple<uint32_t, uint32_t, uint32_t, uint32_t>, CachedTexture> textures;',
+        '''using TextureKey = std::tuple<uint32_t, uint32_t, uint32_t, uint32_t, int>;
+std::map<TextureKey, CachedTexture> textures;''')
+    source = replace_once(source, '#include "vulkan_submission.inc"', '''#include "vulkan_submission.inc"
+
+std::vector<SDL_GPUTexture *> retiring_textures;
+
+void retire_sampled_texture(SDL_GPUTexture *texture) {
+    // Unlike SDL's already-encoded GPU work, DrawRec and TextureUpload
+    // only hold raw pointers until flush records them into a command buffer.
+    if (list_commands.recording) retiring_textures.push_back(texture);
+    else SDL_ReleaseGPUTexture(dev, texture);
+}
+
+bool texture_queued(SDL_GPUTexture *texture) {
+    const auto uses = [texture](const DrawRec &draw) {
+        return std::find(std::begin(draw.tex), std::end(draw.tex), texture) != std::end(draw.tex);
+    };
+    return uses(cur) || std::any_of(batch.begin(), batch.end(), uses) ||
+        std::any_of(texture_uploads.begin(), texture_uploads.end(),
+                    [texture](const TextureUpload &upload) { return upload.tex == texture; });
+}''')
+    source = replace_once(source, '''    auto key = std::make_tuple(t.addr, t.width, t.height, t.format);
+    auto it = textures.find(key);
+    if (it != textures.end() && it->second.hash == fingerprint) {
+        mipmaps = it->second.levels > 1;
+        it->second.last_used = use_clock;
+        return it->second.tex;
+    }''', '''    const TextureKey key{t.addr, t.width, t.height, t.format, hd_pack_quality};
+    const TextureKey native_key{t.addr, t.width, t.height, t.format, 0};
+    auto it = textures.find(key);
+    const auto matches = [&](auto entry) {
+        return entry != textures.end() && entry->second.hash == fingerprint;
+    };
+    const auto use = [&](CachedTexture &entry) {
+        mipmaps = entry.levels > 1;
+        entry.last_used = use_clock;
+        return entry.tex;
+    };
+    if (matches(it)) return use(it->second);
+    const auto native = hd_pack_quality ? textures.find(native_key) : it;
+    const unsigned quality_bit = 1u << hd_pack_quality;
+    if (hd_pack_quality && matches(native) && (native->second.missing_hd & quality_bit))
+        return use(native->second);''')
+    source = replace_once(source,
+        '    const HdImage *hd = hd_pack_quality && pack.rgba.empty() ? hd_texture(h) : nullptr;',
+        '''    const HdImage *hd = hd_pack_quality && pack.rgba.empty() ? hd_texture(h) : nullptr;
+    const bool replaced = !pack.rgba.empty() || hd;
+    if (!replaced) {
+        it = native;
+        if (matches(it)) {
+            it->second.missing_hd |= quality_bit;
+            return use(it->second);
+        }
+    }''')
+    source = replace_once(source, '''    if (it != textures.end() && (it->second.w != w || it->second.h != th || it->second.levels != levels)) { // an HD texture came or went
+        SDL_ReleaseGPUTexture(dev, it->second.tex);
+        textures.erase(it);
+        it = textures.end();
+    }
+    if (it == textures.end())
+        it = textures.emplace(key, CachedTexture{make_texture(w, th, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                                                              SDL_GPU_TEXTUREUSAGE_SAMPLER | (mipmaps ? SDL_GPU_TEXTUREUSAGE_COLOR_TARGET : 0),
+                                                              levels), fingerprint, use_clock, w, th})
+                 .first;''', '''    const bool resize = it != textures.end() &&
+        (it->second.w != w || it->second.h != th || it->second.levels != levels);
+    // All uploads in a batch are encoded before its draws. Never overwrite
+    // a texture a previous draw in this batch still expects to sample.
+    if (it != textures.end() && (resize || texture_queued(it->second.tex))) {
+        auto *old = it->second.tex;
+        retire_sampled_texture(old);
+        if (resize) {
+            textures.erase(it);
+            it = textures.end();
+        } else {
+            it->second.tex = make_texture(w, th, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                SDL_GPU_TEXTUREUSAGE_SAMPLER | (mipmaps ? SDL_GPU_TEXTUREUSAGE_COLOR_TARGET : 0), levels);
+        }
+        if (std::getenv("SM3DL_TRACE_TEXTURE_UPLOADS"))
+            LOG("gpu: preserved a pending texture version at %08x", t.addr);
+    }
+    if (it == textures.end())
+        it = textures.emplace(replaced ? key : native_key,
+                 CachedTexture{make_texture(w, th, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+                                            SDL_GPU_TEXTUREUSAGE_SAMPLER | (mipmaps ? SDL_GPU_TEXTUREUSAGE_COLOR_TARGET : 0),
+                                            levels), fingerprint, use_clock, w, th}).first;
+    it->second.missing_hd = replaced ? 0 : quality_bit;''')
+    source = replace_once(source, '            SDL_ReleaseGPUTexture(dev, it->second.tex);\n            it = textures.erase(it);',
+        '            retire_sampled_texture(it->second.tex);\n            it = textures.erase(it);')
+    source = replace_once(source, '''void end_list() {
+    submit_recorded_commands();
+    list_commands.recording = false;
+}''', '''void end_list() {
+    submit_recorded_commands();
+    list_commands.recording = false;
+    for (auto *texture : retiring_textures) SDL_ReleaseGPUTexture(dev, texture);
+    retiring_textures.clear();
+}''')
+    return replace_once(source, '''        flush(); // finish draws that still reference the old pack
+        // SDL defers releasing in-flight GPU resources. Rebuild textures at a guest list boundary.
+        for (const auto &[key, entry] : textures) SDL_ReleaseGPUTexture(dev, entry.tex);
+        textures.clear();
+        hd_pack_quality = hd;''', '''        // Apply the menu request on the guest render thread. Each draw retains
+        // the variant it was created with; the usual idle eviction bounds the cache.
+        hd_pack_quality = hd;''')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('upstream', type=Path)
@@ -275,7 +389,7 @@ def main():
     edit(src / 'loader.cpp', alon_loader)
     edit(src / 'video/gpu/gpu.cpp', lambda source: faster_texture_checks(faster_scanout_draws(alon_native_scanout(source))))
     edit(src / 'video/gpu/gpu.cpp', texture_options)
-    edit(src / 'video/gpu/gpu.cpp', vulkan_scheduling)
+    edit(src / 'video/gpu/gpu.cpp', lambda source: protect_sampled_textures(vulkan_scheduling(source)))
     edit(src / 'frontend/settings.h', settings_fields)
     edit(src / 'frontend/settings.cpp', settings_options)
     edit(src / 'frontend/sdl.cpp', lambda source: reserve_frontend(frontend_options(source)))

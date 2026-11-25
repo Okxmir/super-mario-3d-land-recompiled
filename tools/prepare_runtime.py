@@ -1999,6 +1999,7 @@ def applets(source):
         "namespace hle {\nnamespace {",
         "namespace hle {\nvoid reply_sm3dl_shared_font(Request &req);\n"
         "void reply_apt_wrap(Request &req);\n"
+        "int test_local_mii_ipc(Service &apt);\n"
         "std::vector<uint8_t> local_mii_selection();\nnamespace {").replace(
         "    Parameter parameter;",
         "    Parameter parameter;\n    uint32_t prepared_applet = 0;\n    std::vector<uint8_t> applet_reply;").replace(
@@ -2049,7 +2050,12 @@ def applets(source):
         case 0x0016: // PreloadLibraryApplet
         case 0x0017: // FinishPreloadingLibraryApplet
         case 0x0018: // PrepareToStartLibraryApplet
-            if (req.arg(0) != APPID_ERROR && req.arg(0) != APPID_MII_SELECTOR) unimplemented(*this, req);
+            // Unsupported optional library applets get a service error rather
+            // than terminating the process. The Mii selector is handled locally.
+            if (req.arg(0) != APPID_ERROR && req.arg(0) != APPID_MII_SELECTOR) {
+                req.reply(1, 0, 0xc880cffa);
+                break;
+            }
             prepared_applet = req.arg(0);
             req.reply(1, 0);
             break;
@@ -2085,7 +2091,10 @@ def applets(source):
         case 0x0047: // Unwrap
             reply_apt_wrap(req);
             break;
-        case 0x004B:""")
+        case 0x004B:""").replace(
+        "void register_apt() {",
+        "int verify_local_mii_applet() { Apt apt; return test_local_mii_ipc(apt); }\n\n"
+        "void register_apt() {")
 
 
 def prepare(upstream, output, experimental_geometry=True, coherent_geometry=False, audit_main=False):

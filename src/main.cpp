@@ -43,6 +43,7 @@ size_t function_count() { return sm3dl::boot_fps() == 30 ? original_recomp_funct
 
 namespace hle {
 int verify_apt_wrap();
+int verify_local_mii_applet();
 }
 
 namespace {
@@ -281,6 +282,7 @@ int run_game(int argc, Char **argv) {
     if (argc == 2 && option == "--verify-textures") return verify_texture_updates();
     if (argc == 2 && option == "--verify-display-colors") return verify_display_colors();
     if (argc == 2 && option == "--verify-apt-wrap") return hle::verify_apt_wrap();
+    if (argc == 2 && option == "--verify-apt-mii") return hle::verify_local_mii_applet();
     if (argc == 2 && option == "--verify-mouse-idle") return verify_mouse_idle();
     const bool verify = argc == 3 && (option == "--verify-startup" || option == "--verify-original-startup");
     if (!verify && (argc > 2 || option.starts_with("--"))) {

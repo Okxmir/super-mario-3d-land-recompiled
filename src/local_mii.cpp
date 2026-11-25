@@ -1,5 +1,10 @@
+#include "hle/service.h"
+#include "memory.h"
+
 #include <algorithm>
+#include <array>
 #include <cstdint>
+#include <cstdio>
 #include <string_view>
 #include <vector>
 
@@ -43,6 +48,38 @@ std::vector<uint8_t> local_mii_selection() {
     mii[0x5e] = uint8_t(crc >> 8);
     mii[0x5f] = uint8_t(crc);
     return reply;
+}
+
+int test_local_mii_ipc(Service &apt) {
+    // Use the real IPC handler and the reported request header, not just the
+    // Mii encoder. Both the 30 FPS and 60 FPS guests use this same service.
+    mem::init();
+    mem::commit(mem::HEAP_BASE, mem::PAGE);
+    Ctx ctx{};
+    ctx.tls = mem::HEAP_BASE;
+    constexpr uint32_t receive = mem::HEAP_BASE + 0x400;
+    mem::write32(ctx.tls + 0x184, receive);
+    std::array<uint32_t, 64> response{};
+    const auto call = [&](uint32_t header, uint32_t first, uint32_t second = 0) {
+        response.fill(0);
+        Request req{response.data(), &ctx, nullptr, {}};
+        req.in[0] = header, req.in[1] = first, req.in[2] = second;
+        apt.handle(req);
+        return response[1];
+    };
+    constexpr uint32_t mii = 0x402, app = 0x300;
+    if (call(0x00180040, 0x4ff) != 0xc880cffa ||
+        call(0x00180040, mii) != 0 ||
+        call(0x00060040, mii) != 0 || response[5] != 1 ||
+        call(0x001e0084, mii, 0) != 0 ||
+        call(0x000d0080, app, 0x84) != 0 ||
+        response[2] != mii || response[3] != 10 || response[4] != 0x84)
+        return 1;
+    const auto expected = local_mii_selection();
+    if (!std::equal(expected.begin(), expected.end(), mem::ptr(receive))) return 1;
+    if (call(0x00090040, mii) != 0 || response[2] != 0) return 1;
+    std::puts("APT 0x00180040 / 0x402 prepared the local Mii selector and returned its result to the game.");
+    return 0;
 }
 
 } // namespace hle
