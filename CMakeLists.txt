@@ -125,6 +125,7 @@ add_test(NAME native_display_colors COMMAND SuperMario3DLand --verify-display-co
 add_test(NAME gamepad_mapping COMMAND SuperMario3DLand --verify-gamepad)
 add_test(NAME display_aspect_ratios COMMAND SuperMario3DLand --verify-aspect-ratio)
 add_test(NAME mystery_box_applet_wrap COMMAND SuperMario3DLand --verify-apt-wrap)
+add_test(NAME local_mii_applet COMMAND SuperMario3DLand --verify-apt-mii)
 
 set(LCD_HEADER "${CMAKE_CURRENT_BINARY_DIR}/sm3dl_lcd.inc")
 add_custom_command(OUTPUT "${LCD_HEADER}"
