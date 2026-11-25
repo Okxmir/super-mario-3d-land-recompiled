@@ -2,6 +2,24 @@
 set -euo pipefail
 
 root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -f "$root/launcher/linux/launcher.py" ]]; then
+    if ! command -v python3 >/dev/null 2>&1; then
+        printf '%s\n' 'Python 3.11 or newer is required. See BUILD.md.' >&2
+        exit 1
+    fi
+    active="$root"
+    if [[ -f "$root/launcher-release.json" && -f "$root/LauncherData/active-linux-launcher.txt" ]]; then
+        read -r release < "$root/LauncherData/active-linux-launcher.txt" || true
+        if [[ "${release:-}" =~ ^version-[0-9]+\.[0-9]+\.[0-9]+-[a-f0-9]{12}(-[A-Za-z0-9_-]+)?$ ]]; then
+            candidate="$root/LauncherData/launcher-updates/$release"
+            if [[ -f "$candidate/launcher/linux/launcher.py" && -f "$candidate/launcher-release.json" ]]; then
+                active="$candidate"
+            fi
+        fi
+    fi
+    export SM3DL_LAUNCHER_HOME="$root"
+    exec python3 "$active/launcher/linux/launcher.py" "$@"
+fi
 if [[ -f "$root/source/tools/linux_builder.py" && -f "$root/source/build.sh" ]]; then
     root="$root/source"
 elif [[ ! -f "$root/tools/linux_builder.py" ]]; then

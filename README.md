@@ -48,7 +48,7 @@ bash build.sh --cartridge "YourRom.3ds" --language en &&
 ./dist/linux-x64/SuperMario3DLandRecompiled
 ```
 
-For the graphical builder, extract the Linux `.tar.gz` with its folders intact, then run `bash SuperMario3DLandBuilder` next to the `source/` folder. After installing the listed system packages, you only need the graphical builder; it creates the game folder beside the selected ROM. Open it again to launch the game, or run `bash SuperMario3DLandBuilder --build-menu` to return to setup.
+For the graphical launcher, extract the Linux `.tar.gz` with its folders intact, then run `bash SuperMario3DLandBuilder` from the extracted directory or a Git checkout. Pick your ROM, language and optional HD packs, then choose **Build** and **Play**. The launcher keeps its files in `LauncherData`. The [launcher guide](launcher/README.md) covers Windows and Linux setup, controls, saves and updates.
 
 ## Display
 
