@@ -32,6 +32,8 @@ The selected ratio applies to the upper game screen. Click **Widescreen** direct
 
 To use an installed toolchain, omit `-Portable`. This path requires 64-bit Python 3.11 or later with pip and Visual Studio with **Desktop development with C++**, the Windows SDK, and CMake tools. Use `-OutputDirectory` to choose a different destination for either build.
 
+For the graphical launcher, run the Windows launcher from the release. Open **Set up the game**, choose your ROM, language and optional HD packs, and select **Build**. When the game is ready, select **Play**. **Settings → Controls** edits keyboard and controller mappings for the next launch without rebuilding. To compile the launcher itself from source, see [the launcher guide](launcher/README.md).
+
 The game uses the original 400 × 240 top screen and 320 × 240 touchscreen. Upscaling multiplies each screen's width and height by the same factor.
 
 The game runs at its original 30 Hz logic. The **FPS** menu on Windows or **Ctrl+F6** chooses original 30 FPS rendering or the 60 FPS ARM patch. Restart to apply the choice. In 16:9 Widescreen, **F11** fills a 16:9 display without stretching the image or keeping the wider crop used for the maximized window.
@@ -64,7 +66,9 @@ bash build.sh --cartridge "YourRom.3ds" --language en &&
 
 Use `--language en`, `fr`, `de`, `es`, `it`, `nl`, `pt`, or `ru`. Omit the option to keep a saved language preference. The build runs the same tests as the Windows build. It writes the executable and required local files to `dist/linux-x64`. Keep the files together. Saves and display preferences are stored in `userdata` beside the executable.
 
-For the graphical builder, extract the whole Linux `.tar.gz` using **Extract Here** or `tar -xzf Super-Mario-3D-Land-Linux-x64-Builder.tar.gz`. Leave `source/` beside `SuperMario3DLandBuilder`. Run `bash SuperMario3DLandBuilder` from that folder (or from a Git checkout). Choose the ROM, language and optional texture packs, then click **Build**. Once the system packages above are installed, the builder handles the rest: you do not need to run the terminal build separately. Paths containing spaces, such as `Super Mario 3D Land`, are supported. When the build completes, run the builder again to launch the game. Use `bash SuperMario3DLandBuilder --build-menu` to return to setup. The game directory is created beside the ROM. The builder writes a log to `source/build/linux-builder.log` (or `build/linux-builder.log` in a Git checkout).
+For the graphical launcher, extract the entire Linux `.tar.gz` using **Extract Here** or `tar -xzf Super-Mario-3D-Land-Linux-x64-v1.1.6.tar.gz`. Keep the extracted folders together. In that folder (or in a Git checkout), run `bash SuperMario3DLandBuilder`. Choose **Set up the game**, select the ROM, language and optional texture packs, then choose **Build**. Select **Play** when the build finishes. The launcher keeps the new game under `LauncherData/Game`, with its log at `LauncherData/build.log`; your ROM stays in place. `bash SuperMario3DLandBuilder --build-menu` opens the ROM picker directly.
+
+**Settings → Controls** offers an interactive handheld diagram and separate keyboard and controller bindings. A shared SDL3 library enables live controller capture on Linux; manual button selection works without it. Either input change takes effect at the next launch. See [the launcher guide](launcher/README.md) for packaging and automatic updates.
 
 Each build uses up to four parallel compile jobs by default. Set `CMAKE_BUILD_PARALLEL_LEVEL=2` if you need to reduce compiler memory use. **F4** cycles through the upscaling options with Vulkan, **F7** switches aspect ratios, and **F9** switches the upper-screen layout.
 

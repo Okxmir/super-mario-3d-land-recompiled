@@ -3,6 +3,7 @@
 /extracted/
 /generated/
 /logs/
+/LauncherData/
 /tools/builder.py
 __pycache__/
 *.3ds
