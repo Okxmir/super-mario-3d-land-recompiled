@@ -369,13 +369,87 @@ bool texture_queued(SDL_GPUTexture *texture) {
     for (auto *texture : retiring_textures) SDL_ReleaseGPUTexture(dev, texture);
     retiring_textures.clear();
 }''')
-    return replace_once(source, '''        flush(); // finish draws that still reference the old pack
+    source = replace_once(source, '''        flush(); // finish draws that still reference the old pack
         // SDL defers releasing in-flight GPU resources. Rebuild textures at a guest list boundary.
         for (const auto &[key, entry] : textures) SDL_ReleaseGPUTexture(dev, entry.tex);
         textures.clear();
         hd_pack_quality = hd;''', '''        // Apply the menu request on the guest render thread. Each draw retains
-        // the variant it was created with; the usual idle eviction bounds the cache.
-        hd_pack_quality = hd;''')
+        // the variant it was created with. Evict only inactive replacements.
+        hd_pack_quality = hd;
+        trim_inactive_hd_textures(hd);''')
+    return replace_once(source, '''void begin_list() {
+    list_commands.recording = true;''', '''uint64_t sampled_texture_bytes(const CachedTexture &entry) {
+    uint64_t total = 0;
+    for (uint32_t level = 0; level < entry.levels; ++level)
+        total += uint64_t(std::max(1u, entry.w >> level)) * std::max(1u, entry.h >> level) * 4;
+    return total;
+}
+
+void trim_inactive_hd_textures(int quality) {
+    // Keep a small hot cache for switching back quickly, not two full packs.
+    // The normal textures and the active pack keep their existing eviction.
+    constexpr uint64_t budget = 64ull << 20;
+    std::vector<decltype(textures)::iterator> inactive;
+    uint64_t bytes = 0;
+    for (auto it = textures.begin(); it != textures.end(); ++it) {
+        const int pack = std::get<4>(it->first);
+        if (!pack || pack == quality) continue;
+        inactive.push_back(it);
+        bytes += sampled_texture_bytes(it->second);
+    }
+    if (bytes <= budget) return;
+    std::sort(inactive.begin(), inactive.end(), [](auto a, auto b) {
+        return a->second.last_used < b->second.last_used;
+    });
+    const uint64_t before = bytes;
+    for (auto it : inactive) {
+        if (bytes <= budget) break;
+        bytes -= sampled_texture_bytes(it->second);
+        retire_sampled_texture(it->second.tex);
+        textures.erase(it);
+    }
+    if (std::getenv("SM3DL_TRACE_UPLOAD_MEMORY"))
+        LOG("gpu: inactive texture pack cache trimmed from %llu to %llu MiB",
+            (unsigned long long)(before >> 20), (unsigned long long)(bytes >> 20));
+}
+
+void begin_list() {
+    list_commands.recording = true;''')
+
+
+def bound_upload_staging(source):
+    start = source.index('// Keep the transfer buffer across batches.')
+    end = source.index('// copies pending texture, LUT, surface and vertex data', start)
+    source = source[:start] + '#include "vulkan_upload_buffers.inc"\n\n' + source[end:]
+    source = replace_once(source, 'void upload_pending(SDL_GPUCommandBuffer *cmd, SDL_GPUBuffer **vbuf) {',
+        'uint64_t upload_pending(SDL_GPUCommandBuffer *cmd, SDL_GPUBuffer **vbuf) {')
+    start = source.index('    if (!total) return;', source.index('uint64_t upload_pending('))
+    end = source.index('    if (!map) {', start)
+    source = source[:start] + '''    if (!total) return 0;
+    const auto staging = acquire_upload_staging(total);
+    auto *tb = staging.buffer;
+    auto *map = tb ? static_cast<uint8_t *>(SDL_MapGPUTransferBuffer(dev, tb, !staging.transient)) : nullptr;
+''' + source[end:]
+    source = replace_once(source, '        texture_uploads.clear(), surface_loads.clear();\n        return;',
+        '        if (tb && staging.transient) SDL_ReleaseGPUTransferBuffer(dev, tb);\n'
+        '        texture_uploads.clear(), surface_loads.clear();\n        return 0;')
+    source = replace_once(source, '''    SDL_EndGPUCopyPass(copy);
+    for (const auto &upload : texture_uploads)''', '''    SDL_EndGPUCopyPass(copy);
+    // SDL retains the encoded reference until the command completes.
+    if (staging.transient) SDL_ReleaseGPUTransferBuffer(dev, tb);
+    for (const auto &upload : texture_uploads)''')
+    source = replace_once(source, '    lut_upload = false;\n}\n\nvoid clear_fresh',
+        '''    lut_upload = false;
+    if (staging.transient && total >= (16u << 20) && std::getenv("SM3DL_TRACE_UPLOAD_MEMORY"))
+        LOG("gpu: %llu MiB temporary upload", (unsigned long long)(total >> 20));
+    return staging.transient ? total : 0;
+}
+
+void clear_fresh''')
+    source = replace_once(source, '    upload_pending(cmd, &vbuf);',
+        '    const auto temporary_uploads = upload_pending(cmd, &vbuf);')
+    return replace_once(source, '    submit_commands(cmd);\n    if (vbuf) SDL_ReleaseGPUBuffer(dev, vbuf);',
+        '    submit_commands(cmd, temporary_uploads);\n    if (vbuf) SDL_ReleaseGPUBuffer(dev, vbuf);')
 
 
 def main():
@@ -389,7 +463,7 @@ def main():
     edit(src / 'loader.cpp', alon_loader)
     edit(src / 'video/gpu/gpu.cpp', lambda source: faster_texture_checks(faster_scanout_draws(alon_native_scanout(source))))
     edit(src / 'video/gpu/gpu.cpp', texture_options)
-    edit(src / 'video/gpu/gpu.cpp', lambda source: protect_sampled_textures(vulkan_scheduling(source)))
+    edit(src / 'video/gpu/gpu.cpp', lambda source: bound_upload_staging(protect_sampled_textures(vulkan_scheduling(source))))
     edit(src / 'frontend/settings.h', settings_fields)
     edit(src / 'frontend/settings.cpp', settings_options)
     edit(src / 'frontend/sdl.cpp', lambda source: reserve_frontend(frontend_options(source)))
