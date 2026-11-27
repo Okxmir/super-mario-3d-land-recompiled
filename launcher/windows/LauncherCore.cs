@@ -13,7 +13,7 @@ using System.Text.RegularExpressions;
 internal sealed class LauncherCore
 {
     internal const string GameName = "SuperMario3DLandRecompiled.exe";
-    internal const string Revision = "152c905f57215af8e84398d677f7a221c3e3054e";
+    internal const string Revision = "5c681eba0506fc7378450a17f77137f6945384e1";
     internal static readonly string[] Languages = { "en", "fr", "de", "it", "es", "nl", "pt", "ru" };
     internal static readonly int[] LanguageIds = { 1, 2, 3, 4, 5, 8, 9, 10 };
     private static readonly string[] RequiredFiles = {
