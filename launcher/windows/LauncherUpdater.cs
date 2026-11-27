@@ -14,7 +14,7 @@ using System.Web.Script.Serialization;
 
 internal sealed class LauncherUpdater
 {
-    internal const string VersionText = "1.1.7.0";
+    internal const string VersionText = "1.1.8.0";
     internal const string Repo = "Okxmir/super-mario-3d-land-recompiled";
     internal const string ReleasesUrl = "https://api.github.com/repos/" + Repo + "/releases?per_page=20";
     internal static readonly Version Current = new Version(VersionText);

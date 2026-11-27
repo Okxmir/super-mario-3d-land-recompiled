@@ -15,7 +15,7 @@ EXE = "SuperMario3DLandRecompiled"
 FILES = (EXE, "SM3DL-EUR.cxi", "mii.romfs", "shared-font.bcfnt")
 LANGUAGES = {"English": ("en", 1), "French": ("fr", 2), "German": ("de", 3), "Italian": ("it", 4),
              "Spanish": ("es", 5), "Dutch": ("nl", 8), "Portuguese": ("pt", 9), "Russian": ("ru", 10)}
-VERSION = "1.1.7"
+VERSION = "1.1.8"
 PACKS = ("None", "1080p", "4K")
 VERSION_RE = re.compile(r"(?:0|[1-9][0-9]{0,4})(?:\.(?:0|[1-9][0-9]{0,4})){2}\Z")
 
