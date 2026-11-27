@@ -55,7 +55,16 @@ const CoherentPerformanceSets &coherent_performance_sets() {
             fast = std::max(fast, unsigned(cpu.EfficiencyClass));
             slow = std::min(slow, unsigned(cpu.EfficiencyClass));
         }
-        if (fast <= slow) return out; // uniform CPU or caller already restricted the process
+        // Hyper-thread siblings share the execution units of their physical
+        // core. Waking both for every small mesh can stall the render thread.
+        if (fast <= slow) {
+            bool cores[256]{};
+            unsigned physical = 0;
+            for (const auto &entry : candidates)
+                if (!cores[entry.core]) cores[entry.core] = true, ++physical;
+            if (physical) out.core_count = physical;
+            return out;
+        }
         CoherentPerformanceSets preferred;
         bool cores[256]{};
         for (const auto &entry : candidates) if (entry.efficiency == fast) {
@@ -89,7 +98,12 @@ void coherent_select_performance_cores() {
 // A pool of threads for parallel vertex shading:''')
     source = once(source, '        lanes = int(std::clamp(hw ? hw : 1u, 1u, 8u));', '''        const auto &sets = coherent_performance_sets();
         if (sets.core_count) hw = sets.core_count;
-        lanes = int(std::clamp(hw ? hw : 1u, 1u, 8u));''')
+        if (const char *override = std::getenv("SM3DL_VERTEX_LANES")) {
+            const int requested = std::atoi(override);
+            if (requested >= 1 && requested <= 8) hw = unsigned(requested);
+        }
+        lanes = int(std::clamp(hw ? hw : 1u, 1u, 8u));
+        LOG("pica: %d vertex shading lane(s)", lanes);''')
     source = once(source, '    void loop(int lane) {\n        uint64_t seen = 0;', '''    void loop(int lane) {
         coherent_select_performance_cores();
         uint64_t seen = 0;''')
@@ -127,25 +141,37 @@ void coherent_select_performance_cores() {
     struct Item { AttrSource src; uint8_t reg; };
     Vec4 initial[16]{};
     Item items[12]{};
+    uint8_t init_registers[16]{};
+    unsigned init_count = 0;
     unsigned n = 0;
     bool valid = false;
 
-    CoherentVertexFetch(const VertexLoader &loader, const OutputMap &map) {
+    CoherentVertexFetch(const VertexLoader &loader, const OutputMap &map, uint16_t used = 0xffff) {
         if (map.input_count > 12 || map.input_count > loader.attr_count) return;
-        uint32_t assigned = 0;
+        uint32_t assigned = 0, dynamic = 0;
         for (uint32_t i = 0; i < map.input_count; ++i) {
             const uint8_t reg = map.input_registers[i];
             if (assigned & (1u << reg)) return;
             assigned |= 1u << reg;
+            if (!(used & (1u << reg))) continue;
             const auto &src = loader.attrs[i];
             if ((loader.fixed_mask >> i) & 1 || !src.data) initial[reg] = fixed_attr[i];
-            else items[n++] = {src, reg};
+            else {
+                items[n++] = {src, reg};
+                dynamic |= 1u << reg;
+            }
         }
+        for (unsigned reg = 0; reg < 16; ++reg)
+            if ((used & ~dynamic) & (1u << reg)) init_registers[init_count++] = uint8_t(reg);
         valid = true;
     }
 
     void load(uint32_t index, Vec4 in[16]) const {
-        std::memcpy(in, initial, sizeof initial);
+        if (init_count > 8) std::memcpy(in, initial, sizeof initial);
+        else for (unsigned i = 0; i < init_count; ++i) {
+            const uint8_t reg = init_registers[i];
+            in[reg] = initial[reg];
+        }
         for (unsigned i = 0; i < n; ++i) {
             const auto &a = items[i].src;
             const auto *p = a.data + size_t(index) * a.stride;
@@ -179,8 +205,88 @@ Vertex shade_mapped(const Vec4 in[16], const OutputMap &map, CompiledVertex comp
 }
 
 // Widescreen: whether a draw fills the screen''')
-    source = once(source, '    if (n >= 512 && !indexed) {', '''    const CoherentVertexFetch plan(loader, map);
+    # The PICA output registers usually map four consecutive float components
+    # to one vertex semantic (position, quaternion, color, UV). Build a copy
+    # plan once per draw instead of scattering every component per vertex.
+    # Retain original order even for unusual/overlapping maps.
+    source = once(source, '    uint32_t component_count = 0;\n    uint8_t input_registers[16]{};', '''    uint32_t component_count = 0;
+    struct Run { uint8_t reg, channel, semantic, count; };
+    Run runs[28]{};
+    uint32_t run_count = 0;
+    uint16_t mapped_outputs = 0;
+    uint8_t zero_regs[16]{};
+    unsigned zero_count = 16; // interpreter and immediate-mode safe default
+    void configure_output_initialization(const CompiledVertexUsage &usage) {
+        const uint16_t required = usage.read_before_write | (mapped_outputs & ~usage.written_outputs);
+        zero_count = 0;
+        for (unsigned reg = 0; reg < 16; ++reg)
+            if (required & (1u << reg)) zero_regs[zero_count++] = uint8_t(reg);
+    }
+    uint8_t input_registers[16]{};''')
+    source = once(source, '''            reg++;
+        }
+    }
+};
+
+struct CoherentVertexFetch''', '''            reg++;
+        }
+        for (uint32_t i = 0; i < component_count; ++i) {
+            const auto c = components[i];
+            mapped_outputs |= uint16_t(1u << c.reg);
+            if (run_count) {
+                auto &last = runs[run_count - 1];
+                if (last.reg == c.reg && last.channel + last.count == c.channel &&
+                    last.semantic + last.count == c.semantic && last.count < 4) {
+                    ++last.count;
+                    continue;
+                }
+            }
+            runs[run_count++] = {c.reg, c.channel, c.semantic, 1};
+        }
+    }
+};
+
+struct CoherentVertexFetch''')
+    source = once(source, '''    for (uint32_t i = 0; i < map.component_count; ++i) {
+        const auto &component = map.components[i];
+        v.a[component.semantic] = out[component.reg][component.channel];
+    }''', '''    for (uint32_t i = 0; i < map.run_count; ++i) {
+        const auto &run = map.runs[i];
+        const float *in = out[run.reg].v + run.channel;
+        float *dst = v.a + run.semantic;
+        switch (run.count) {
+        case 4: std::memcpy(dst, in, 16); break;
+        case 3: std::memcpy(dst, in, 12); break;
+        case 2: std::memcpy(dst, in, 8); break;
+        default: std::memcpy(dst, in, 4); break;
+        }
+    }
+    static const bool verify_map = std::getenv("SM3DL_VERIFY_COHERENT_OUTPUTS") != nullptr;
+    if (verify_map) {
+        Vertex reference{};
+        for (uint32_t i = 0; i < map.component_count; ++i) {
+            const auto &component = map.components[i];
+            reference.a[component.semantic] = out[component.reg][component.channel];
+        }
+        if (std::memcmp(&reference, &v, sizeof v) != 0) fatal("PICA output copy plan mismatch");
+    }''')
+    source = once(source, '    const auto compiled = interpret ? nullptr : find_compiled_shader(vs, regs[VS_ENTRY] & 0xFFFF, shader_revision);', '''    uint16_t used_inputs = 0xffff;
+    CompiledVertexUsage usage{};
+    const auto compiled = interpret ? nullptr : find_compiled_shader(vs, regs[VS_ENTRY] & 0xFFFF, shader_revision, &usage);
+    static const bool all_inputs = std::getenv("SM3DL_ALL_VERTEX_INPUTS") || std::getenv("SM3DL_VERIFY_VERTEX");
+    static const bool all_outputs = std::getenv("SM3DL_ALL_VERTEX_OUTPUTS") || std::getenv("SM3DL_VERIFY_VERTEX");
+    if (!all_inputs) used_inputs = usage.inputs;
+    if (!all_outputs && compiled) map.configure_output_initialization(usage);''')
+    source = once(source, 'Vertex shade_mapped(const Vec4 in[16], const OutputMap &map, CompiledVertex compiled) {\n    Vec4 out[16] = {};',
+        '''Vertex shade_mapped(const Vec4 in[16], const OutputMap &map, CompiledVertex compiled) {
+    Vec4 out[16];
+    if (map.zero_count > 8) std::memset(out, 0, sizeof out);
+    else for (unsigned i = 0; i < map.zero_count; ++i) out[map.zero_regs[i]] = Vec4{};''')
+    source = once(source, '    if (n >= 512 && !indexed) {', '''    const CoherentVertexFetch plan(loader, map, used_inputs);
     static const bool verify_inputs = std::getenv("SM3DL_VERIFY_COHERENT_INPUTS") != nullptr;
+    static const bool verify_mask = std::getenv("SM3DL_VERIFY_INPUT_MASK") != nullptr;
+    OutputMap reference_map = map;
+    reference_map.zero_count = 16;
     if (verify_inputs && plan.valid) {
         static const bool announced = [] { LOG("pica: verifying coherent vertex inputs bit for bit"); return true; }();
         (void)announced;
@@ -189,12 +295,20 @@ Vertex shade_mapped(const Vec4 in[16], const OutputMap &map, CompiledVertex comp
         if (plan.valid) {
             Vec4 in[16];
             plan.load(index, in);
-            if (verify_inputs) {
+            if (verify_inputs || verify_mask) {
                 Vec4 original[16]{}, expected[16]{};
                 loader.read(index, original);
                 for (uint32_t i = 0; i < map.input_count; ++i) expected[map.input_registers[i]] = original[i];
-                if (std::memcmp(expected, in, sizeof in) != 0)
-                    fatal("coherent PICA vertex input mismatch at index %u", index);
+                for (unsigned reg = 0; reg < 16; ++reg)
+                    if ((used_inputs & (1u << reg)) && std::memcmp(&expected[reg], &in[reg], sizeof(Vec4)) != 0)
+                        fatal("coherent PICA vertex input mismatch at index %u, register %u", index, reg);
+                if (verify_mask && compiled) {
+                    const Vertex actual = shade_mapped(in, map, compiled);
+                    const Vertex reference = shade_mapped(expected, reference_map, compiled);
+                    if (std::memcmp(&reference, &actual, sizeof actual) != 0)
+                        fatal("PICA input-mask optimization changed shaded vertex at index %u", index);
+                    return actual;
+                }
             }
             return shade_mapped(in, map, compiled);
         }

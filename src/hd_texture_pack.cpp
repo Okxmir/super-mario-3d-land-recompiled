@@ -220,12 +220,13 @@ bool has_hd_texture_pack(int quality) { return !pack_files(quality).empty(); }
 const char *hd_quality_name(int quality) { return quality == 2 ? "4K" : quality == 1 ? "1080p" : "None"; }
 
 PackTexture load_pack_texture(const uint8_t *data, std::size_t size, uint32_t width,
-                              uint32_t height, uint32_t format, int quality) {
+                              uint32_t height, uint32_t format, int quality,
+                              std::optional<uint64_t> fingerprint) {
     const auto &index = pack_files(quality);
     const auto shape = index.find({width, height, format});
     const bool localized_font = width == 256 && (height == 32 || height == 64) && format == 11;
     if (index.empty() || (shape == index.end() && !localized_font)) return {};
-    const uint64_t hash = texture_hash(reinterpret_cast<const char *>(data), size);
+    const uint64_t hash = fingerprint ? *fingerprint : texture_hash(reinterpret_cast<const char *>(data), size);
     auto localized_replacement = [&] {
         if (!localized_font) return PackTexture{};
         pica::Texture guest;

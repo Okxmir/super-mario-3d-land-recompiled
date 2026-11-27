@@ -1,6 +1,90 @@
 $ErrorActionPreference = 'Stop'
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
 
+function Get-Sm3dlSystemTar {
+    # Never resolve tar through PATH: DevkitPro, MSYS2, Git and Cygwin can
+    # supply GNU tar, which interprets C:\... as a remote host. Sysnative
+    # also covers a 32-bit PowerShell process on 64-bit Windows.
+    @('Sysnative/tar.exe', 'System32/tar.exe') | ForEach-Object {
+        Join-Path $env:SystemRoot $_
+    } | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+}
+
+function Expand-Sm3dlArchive([string] $Archive, [string] $Destination, [ValidateRange(0, 100)][int] $Strip = 0) {
+    $archivePath = (Resolve-Path -LiteralPath $Archive).Path
+    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
+    $destinationPath = (Resolve-Path -LiteralPath $Destination).Path
+    $systemTar = Get-Sm3dlSystemTar
+    if ($systemTar) {
+        # Ignore archived timestamps, which may be unsupported on FAT/exFAT.
+        $arguments = @('-xmf', $archivePath, '-C', $destinationPath)
+        if ($Strip -gt 0) { $arguments += "--strip-components=$Strip" }
+        & $systemTar @arguments
+        if ($LASTEXITCODE -ne 0) { throw "Could not unpack $(Split-Path -Leaf $archivePath) (Windows tar exit code $LASTEXITCODE)." }
+        return
+    }
+
+    # ZIP files (including Python wheels) can be extracted without tar or
+    # Python, even during the portable toolchain bootstrap.
+    if ([IO.Path]::GetExtension($archivePath) -in @('.zip', '.whl')) {
+        Add-Type -AssemblyName System.IO.Compression
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+        $prefix = [IO.Path]::GetFullPath($destinationPath).TrimEnd('\', '/') + '\'
+        $zip = [IO.Compression.ZipFile]::OpenRead($archivePath)
+        try {
+            foreach ($entry in $zip.Entries) {
+                $name = $entry.FullName.Replace('\', '/')
+                $parts = $name.TrimEnd('/').Split('/')
+                if ($name.StartsWith('/')) { throw "Invalid path in archive: $name" }
+                foreach ($part in $parts) {
+                    if ($part -in @('', '.', '..') -or $part.Contains(':')) {
+                        throw "Invalid path in archive: $name"
+                    }
+                }
+                if ($parts.Length -le $Strip) { continue }
+                $relative = $parts[$Strip..($parts.Length - 1)] -join '\'
+                $target = [IO.Path]::GetFullPath((Join-Path $destinationPath $relative))
+                if (!$target.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+                    throw "Invalid path in archive: $name"
+                }
+                if ($name.EndsWith('/')) {
+                    [IO.Directory]::CreateDirectory($target) | Out-Null
+                    continue
+                }
+                [IO.Directory]::CreateDirectory([IO.Path]::GetDirectoryName($target)) | Out-Null
+                $inputStream = $entry.Open()
+                try {
+                    $outputStream = [IO.File]::Open($target, [IO.FileMode]::Create)
+                    try { $inputStream.CopyTo($outputStream) } finally { $outputStream.Dispose() }
+                } finally { $inputStream.Dispose() }
+            }
+        } finally { $zip.Dispose() }
+        return
+    }
+
+    # A portable Python installation is already available by the time the
+    # .crate and Rust archives are unpacked on older Windows systems.
+    $python = Join-Path $ProjectRoot 'build/p/python/python.exe'
+    if (!(Test-Path -LiteralPath $python -PathType Leaf)) {
+        $python = (Get-Command python.exe -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+    }
+    if (!$python) { throw 'Windows tar is unavailable and Python is required to unpack this TAR archive.' }
+    $extract = @'
+import sys, tarfile
+archive, destination, strip = sys.argv[1:]
+strip = int(strip)
+def filter_member(member, target):
+    parts = member.name.split('/')
+    if len(parts) <= strip:
+        return None
+    return tarfile.data_filter(member.replace(name='/'.join(parts[strip:]), mtime=None, deep=False), target)
+with tarfile.open(archive, 'r:*') as t:
+    t.extractall(destination, filter=filter_member)
+'@
+    & $python -c $extract $archivePath $destinationPath "$Strip"
+    if ($LASTEXITCODE -ne 0) { throw "Could not unpack $(Split-Path -Leaf $archivePath) with Python." }
+}
+
 function Get-Sm3dlVerifiedArchive([string] $Name, [string] $Url, [string] $Sha256, [string] $Directory) {
     $path = Join-Path $Directory $Name
     if (!(Test-Path -LiteralPath $path)) {

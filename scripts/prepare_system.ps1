@@ -24,7 +24,7 @@ if (!$Portable) {
 }
 $source = Join-Path $upstream "citra_system_archives-$commit"
 if (!(Test-Path -LiteralPath "$source/shared_font/create_png.py")) {
-    Expand-Archive -LiteralPath $archive -DestinationPath $upstream -Force
+    Expand-Sm3dlArchive $archive $upstream
 }
 $previousPythonPath = $env:PYTHONPATH
 $previousTemp = $env:TEMP

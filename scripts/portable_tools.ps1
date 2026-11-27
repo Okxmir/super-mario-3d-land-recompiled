@@ -9,8 +9,12 @@ function Initialize-Sm3dlPortableTools {
         if (!(Test-Path -LiteralPath $ready) -or !(Test-Path -LiteralPath "$target/$Marker" -PathType Leaf)) {
             $archive = Get-Sm3dlVerifiedArchive $File $Url $Hash $downloads
             New-Item -ItemType Directory -Path $target -Force | Out-Null
-            & tar.exe -xf $archive -C $target "--strip-components=$Strip"
-            if ($LASTEXITCODE -ne 0 -or !(Test-Path -LiteralPath "$target/$Marker" -PathType Leaf)) {
+            # ZIP timestamps are not necessarily representable on FAT/exFAT
+            # or some Windows storage drivers. The binaries are verified by
+            # SHA-256 and do not need their archived modification dates.
+            # Do not suppress actual extraction or missing-file errors.
+            Expand-Sm3dlArchive $archive $target $Strip
+            if (!(Test-Path -LiteralPath "$target/$Marker" -PathType Leaf)) {
                 throw "Could not unpack $File."
             }
             New-Item -ItemType File -Path $ready -Force | Out-Null
@@ -42,8 +46,7 @@ function Initialize-Sm3dlPortableTools {
             'https://files.pythonhosted.org/packages/3e/b9/3766cc361d93edb2ce81e2e1f87dd98f314d7d513877a342d31b30741680/pypng-0.20220715.0-py3-none-any.whl' `
             '4A43E969B8F5AAAFB2A415536C1A8EC7E341CD6A3F957FD5B5F32A4CFEED902C' $downloads
         foreach ($wheel in @($pillow, $png)) {
-            & tar.exe -xf $wheel -C $packages
-            if ($LASTEXITCODE -ne 0) { throw "Could not unpack $wheel." }
+            Expand-Sm3dlArchive $wheel $packages
         }
         & $python -c 'from PIL import Image; import png'
         if ($LASTEXITCODE -ne 0) { throw 'Could not load the portable Python image modules.' }
@@ -70,7 +73,7 @@ prefix = component + '/'
 
 def strip_component(member, target):
     if member.name.startswith(prefix) and member.name != prefix:
-        relative = member.replace(name=member.name[len(prefix):], deep=False)
+        relative = member.replace(name=member.name[len(prefix):], mtime=None, deep=False)
         return tarfile.data_filter(relative, target)
     return None
 

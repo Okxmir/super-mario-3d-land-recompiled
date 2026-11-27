@@ -53,6 +53,10 @@ try {
         $path
     }
 
+    function Expand-VerifiedArchive([string] $Archive, [string] $Destination) {
+        Expand-Sm3dlArchive $Archive $Destination
+    }
+
     $commit = '3047d9e990be4ac2c84174cb570dfec569c882e9'
     $clockwork = Get-VerifiedArchive 'clockwork-pinned.zip' `
         "https://codeload.github.com/watchmakerers/clockwork/zip/$commit" `
@@ -68,25 +72,24 @@ try {
         '6CDC315748EB2EB1461ED5447BB9FDB65B195D49F4237BD760BBF5166BD2004F'
 
     if (!(Test-Path -LiteralPath "$upstream/clockwork-master/tools/recomp/src/main.rs")) {
-        Expand-Archive -LiteralPath $clockwork -DestinationPath $upstream -Force
+        Expand-VerifiedArchive $clockwork $upstream
         New-Item -ItemType Directory -Force -Path "$upstream/clockwork-master" | Out-Null
         Copy-Item -Path "$upstream/clockwork-$commit/*" -Destination "$upstream/clockwork-master" -Recurse -Force
     }
     if (!(Test-Path -LiteralPath "$upstream/SDL3-3.4.0/cmake/SDL3Config.cmake")) {
-        Expand-Archive -LiteralPath $sdl -DestinationPath $upstream -Force
+        Expand-VerifiedArchive $sdl $upstream
     }
     $dxc = Get-VerifiedArchive 'dxc_2025_07_14.zip' 'https://github.com/microsoft/DirectXShaderCompiler/releases/download/v1.8.2505.1/dxc_2025_07_14.zip' '9AD895A6B039E3A8F8C22A1009F866800B840A74B50DB9218D13319E215EA8A4'
     $dxcDir = Join-Path $upstream 'dxc-1.8.2505.1'
     if (!(Test-Path -LiteralPath "$dxcDir/bin/x64/dxc.exe")) {
-        Expand-Archive -LiteralPath $dxc -DestinationPath $dxcDir -Force
+        Expand-VerifiedArchive $dxc $dxcDir
     }
     $xbyakCommit = 'df112862583c2d327c1d9782fd28f53aa675f11d'
     $xbyak = Get-VerifiedArchive 'xbyak-pinned.zip' "https://codeload.github.com/herumi/xbyak/zip/$xbyakCommit" 'B0E8D74A5813D4C4D2BAA550B889B7F7C2696E471DFB8DE1554CE47F7E52D7F8'
     if (!(Test-Path -LiteralPath "$upstream/xbyak-$xbyakCommit/xbyak/xbyak.h")) {
-        Expand-Archive -LiteralPath $xbyak -DestinationPath $upstream -Force
+        Expand-VerifiedArchive $xbyak $upstream
     }
-    tar.exe -xf $memmap -C $upstream
-    if ($LASTEXITCODE -ne 0) { throw "Could not unpack $memmap" }
+    Expand-Sm3dlArchive $memmap $upstream
     if ($Portable) {
         & scripts/build_tools.cmd "$ProjectRoot/build/p/rust/bin/rustc.exe" portable
     } else {
@@ -98,8 +101,7 @@ try {
             "https://static.rust-lang.org/dist/rust-std-$rustVersion.tar.xz" `
             '3B8C22F81C93C7E914369433430792BD6C06403806AE25B0B95F3CFC540A8B48'
         foreach ($archive in @($rustc, $rustStd)) {
-            tar.exe -xf $archive -C $upstream
-            if ($LASTEXITCODE -ne 0) { throw "Could not unpack $archive" }
+            Expand-Sm3dlArchive $archive $upstream
         }
         $compiler = Join-Path $upstream "rustc-$rustVersion/rustc"
         $standardLib = Join-Path $upstream "rust-std-$rustVersion/rust-std-x86_64-pc-windows-msvc/lib/rustlib/x86_64-pc-windows-msvc/lib"

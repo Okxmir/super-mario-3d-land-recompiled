@@ -4,6 +4,8 @@
 
 Use Windows 10 or 11 x64 and an internet connection for the first build. The portable build downloads its own compiler, Python, and other pinned dependencies. It takes several minutes, depending on your connection and PC.
 
+The Windows builder uses the Windows system archive extractor instead of any `tar.exe` supplied by DevkitPro, MSYS2, Cygwin, or other developer environments. Build locations containing spaces and ZIP or TAR archives on drives with limited timestamp support are supported without changing your system PATH.
+
 Use a decrypted `.3ds`, `.cci`, or `.cxi` dump of the supported European revision (`CTR-P-AREP`, title ID `0004000000053F00`). The build verifies the game partition and the unpacked code before generating the native executable.
 
 The builder identifies the supported original revision from the game code. It verifies the decrypted content even if the container still reports encryption. When the full ExHeader matches the supported original, the extractor can restore its digest in the generated build copy. The input ROM stays on disk as supplied. Revisions with different game code require a separate port update.
@@ -66,7 +68,7 @@ bash build.sh --cartridge "YourRom.3ds" --language en &&
 
 Use `--language en`, `fr`, `de`, `es`, `it`, `nl`, `pt`, or `ru`. Omit the option to keep a saved language preference. The build runs the same tests as the Windows build. It writes the executable and required local files to `dist/linux-x64`. Keep the files together. Saves and display preferences are stored in `userdata` beside the executable.
 
-For the graphical launcher, extract the entire Linux `.tar.gz` using **Extract Here** or `tar -xzf Super-Mario-3D-Land-Linux-x64-v1.1.7.tar.gz`. Keep the extracted folders together. In that folder (or in a Git checkout), run `bash SuperMario3DLandBuilder`. Choose **Set up the game**, select the ROM, language and optional texture packs, then choose **Build**. Select **Play** when the build finishes. The launcher keeps the new game under `LauncherData/Game`, with its log at `LauncherData/build.log`; your ROM stays in place. `bash SuperMario3DLandBuilder --build-menu` opens the ROM picker directly.
+For the graphical launcher, extract the entire Linux `.tar.gz` using **Extract Here** or `tar -xzf Super-Mario-3D-Land-Linux-x64-v1.1.8.tar.gz`. Keep the extracted folders together. In that folder (or in a Git checkout), run `bash SuperMario3DLandBuilder`. Choose **Set up the game**, select the ROM, language and optional texture packs, then choose **Build**. Select **Play** when the build finishes. The launcher keeps the new game under `LauncherData/Game`, with its log at `LauncherData/build.log`; your ROM stays in place. `bash SuperMario3DLandBuilder --build-menu` opens the ROM picker directly.
 
 **Settings → Controls** offers an interactive handheld diagram and separate keyboard and controller bindings. A shared SDL3 library enables live controller capture on Linux; manual button selection works without it. Either input change takes effect at the next launch. See [the launcher guide](launcher/README.md) for packaging and automatic updates.
 

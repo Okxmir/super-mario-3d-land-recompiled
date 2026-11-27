@@ -115,12 +115,24 @@ def alon_native_scanout(source):
     source = '#include "display_options.h"\n' + source
     source = source.replace('} top_queue; // under lcd_lock', '''} top_queue; // under lcd_lock
 std::array<uint32_t, 3> native_lcd_addresses{}; // previous top-left selections, under lcd_lock
-uint32_t native_render_id = 0;''', 1)
+uint32_t native_render_id = 0;
+uint64_t native_pushes = 0, native_drops = 0, native_pops = 0, native_empty = 0;''', 1)
     source = replace_once(source, 'void advance_top_queue() {', 'void advance_top_queue(bool native_frame = false) {')
-    source = replace_once(source, '        q.priming = true;\n        return;', '''        // A late native image only costs this tick. Requiring two more images
+    source = replace_once(source, '        q.priming = true;\n        return;', '''        if (native_frame) ++native_empty;
+        // A late native image only costs this tick. Requiring two more images
         // after a single miss inserts another hitch, even when rendering has recovered.
         if (!native_frame) q.priming = true;
         return;''')
+    source = replace_once(source, '    while (q.ready.size() > q.depth) q.ready.pop_front(), interp_stats.dropped++; // fell behind',
+        '''    // Native ARM phases sometimes complete two at once. Keep the small
+    // extra headroom instead of discarding a valid phase that the next
+    // VBlank may need. The older synthetic path keeps its original cap.
+    const size_t limit = q.depth + (native_frame ? 1u : 0u);
+    while (q.ready.size() > limit) {
+        q.ready.pop_front(); ++interp_stats.dropped;
+        if (native_frame) ++native_drops;
+    }
+    if (native_frame) ++native_pops;''')
     source = source.replace('    bool queue = top && interp_on;', '''    static const bool baseline = std::getenv("SM3DL_ALON_BASE_RENDER") != nullptr;
     const uint32_t stamp = sm3dl::boot_fps() == 60 && !baseline && top && land_top && mem::is_committed(0x00432008u) ?
         mem::read32(0x00432008u) : 0;
@@ -131,12 +143,13 @@ uint32_t native_render_id = 0;''', 1)
     source = source.replace('        qslot = q.next, q.next = (q.next + 1) % 8;', '''        qslot = q.next, q.next = (q.next + 1) % 8;
         if (native && !q.tex[qslot]) q.reset(), queue = false;''', 1)
     source = source.replace('    if (queue) {\n        if (mid) interp_stats.mids++;', '''    if (queue && native) {
-        // One frame of headroom handles a render that finishes just either
-        // side of the VBlank. Never accumulate a long or stale queue.
-        q.depth = 2;
-        if (q.last_push + 3 < vblanks.load()) q.reset();
-        while (q.ready.size() >= 3) q.ready.pop_front();
+        // Two frames of headroom absorb alternating late/early native
+        // phases without changing guest timing. At most four pending images.
+        q.depth = 3;
+        if (q.last_push + 4 < vblanks.load()) q.reset();
+        while (q.ready.size() >= 4) q.ready.pop_front(), ++native_drops;
         q.ready.push_back(qslot);
+        ++native_pushes;
         native_render_id = stamp;
         q.last_push = vblanks.load();
         q.addr = out;
@@ -145,6 +158,19 @@ uint32_t native_render_id = 0;''', 1)
     source = source.replace('    advance_top_queue();\n    SDL_UnlockMutex(lcd_lock);', '''    static const bool baseline = std::getenv("SM3DL_ALON_BASE_RENDER") != nullptr;
     if (baseline) advance_top_queue();
     SDL_UnlockMutex(lcd_lock);''', 1)
+    source = replace_once(source, '    if (queue) blit(src->tex, q.tex[qslot]);', '''    if (queue) {
+        // The native LCD and queued native frame contain exactly the same
+        // RGBA pixels. Copy the completed scanout instead of running its
+        // full-screen conversion shader a second time.
+        static const bool duplicate = std::getenv("SM3DL_DUPLICATE_NATIVE_BLIT") != nullptr;
+        if (native && !duplicate && !land_bottom) {
+            SDL_GPUTextureLocation from{}, to{};
+            from.texture = f.tex[slot]; to.texture = q.tex[qslot];
+            SDL_GPUCopyPass *copy = SDL_BeginGPUCopyPass(cmd);
+            SDL_CopyGPUTextureToTexture(copy, &from, &to, uint32_t(w), uint32_t(h), 1, false);
+            SDL_EndGPUCopyPass(copy);
+        } else blit(src->tex, q.tex[qslot]);
+    }''')
     start = source.index('SDL_GPUTexture *top_frame(')
     end = source.index('void enable_course_hud(', start)
     return source[:start] + '''void remember_alon_top_buffer(uint32_t address) {
@@ -167,13 +193,22 @@ SDL_GPUTexture *top_frame(uint32_t address, int *width, int *height, bool *inter
         const auto it = lcd.find(address);
         SDL_GPUTexture *result = nullptr;
         if (it != lcd.end() && it->second.latest >= 0 && it->second.w == q.w && it->second.h == q.h &&
-            vblanks.load() - q.last_push < 3) {
+            vblanks.load() - q.last_push < 5) {
             advance_top_queue(true);
             const int slot = q.latest >= 0 ? q.latest : q.ready.empty() ? -1 : q.ready.front();
             if (slot >= 0) result = q.tex[slot];
             if (result) *width = q.w, *height = q.h;
         } else {
             q.reset();
+        }
+        static const bool trace = std::getenv("SM3DL_ALON_TRACE") != nullptr;
+        static unsigned ticks = 0;
+        if (trace && ++ticks == 300) {
+            LOG("native queue: %llu pushed, %llu shown, %llu dropped, %llu empty ticks, %zu pending",
+                (unsigned long long)native_pushes, (unsigned long long)native_pops,
+                (unsigned long long)native_drops, (unsigned long long)native_empty, q.ready.size());
+            native_pushes = native_pops = native_drops = native_empty = 0;
+            ticks = 0;
         }
         SDL_UnlockMutex(lcd_lock);
         if (result) return result;
@@ -452,6 +487,15 @@ void clear_fresh''')
         '    submit_commands(cmd, temporary_uploads);\n    if (vbuf) SDL_ReleaseGPUBuffer(dev, vbuf);')
 
 
+def idempotent_lighting_writes(source):
+    return replace_once(source,
+        '            if (table < 24) lighting_lut[table][at & 0xFF] = value, lighting_lut_version++;',
+        '''            if (table < 24) {
+                auto &entry = lighting_lut[table][at & 0xFF];
+                if (entry != value) entry = value, ++lighting_lut_version;
+            }''')
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('upstream', type=Path)
@@ -462,7 +506,10 @@ def main():
     src = args.output / 'src'
     edit(src / 'loader.cpp', alon_loader)
     edit(src / 'video/gpu/gpu.cpp', lambda source: faster_texture_checks(faster_scanout_draws(alon_native_scanout(source))))
-    edit(src / 'video/gpu/gpu.cpp', texture_options)
+    edit(src / 'video/gpu/gpu.cpp', lambda source: replace_once(texture_options(source),
+        'sm3dl::load_pack_texture(t.data, t.bytes, t.width, t.height, t.format, hd_pack_quality)',
+        'sm3dl::load_pack_texture(t.data, t.bytes, t.width, t.height, t.format, hd_pack_quality,\n'
+        '        fresh ? std::optional<uint64_t>{fingerprint} : std::nullopt)'))
     edit(src / 'video/gpu/gpu.cpp', lambda source: bound_upload_staging(protect_sampled_textures(vulkan_scheduling(source))))
     edit(src / 'frontend/settings.h', settings_fields)
     edit(src / 'frontend/settings.cpp', settings_options)
@@ -472,6 +519,7 @@ def main():
         'void remember_alon_top_buffer(uint32_t address);\nSDL_GPUTexture *top_frame(', 1))
     edit(src / 'hle/gsp.cpp', alon_gsp)
     edit(src / 'video/pica.cpp', coherent_pica_fast)
+    edit(src / 'video/pica.cpp', idempotent_lighting_writes)
     edit(src / 'video/pica.cpp', lambda source: replace_once(source,
         '    flush_draws(); // the GPU is done with this list once everything in it is drawn',
         '    flush_draws(); // send the recorded passes before completing the guest list\n'

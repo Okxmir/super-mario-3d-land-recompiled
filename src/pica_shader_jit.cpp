@@ -36,10 +36,12 @@ namespace {
 class VertexEmitter final : public Xbyak::CodeGenerator {
 public:
     VertexEmitter() : CodeGenerator(4096, Xbyak::AutoGrow) {}
+    CompiledVertexUsage usage{0, 0, 0};
 
     bool compile(const ShaderSetup &shader, uint32_t entry, bool graph = false) {
         if (graph) {
             if (!emit_graph(shader, entry)) return false;
+            usage.read_before_write = 0xffff;
         } else if (!emit_specialized(shader, entry)) {
             return false;
         }
@@ -67,6 +69,8 @@ private:
             return arithmetic(decoded, shader.swizzle[decoded.descriptor]);
         };
         auto branch = [&](uint32_t word, uint32_t start, uint32_t alternate, uint32_t end, int32_t loop) {
+            // Branches can skip a write, so do not elide output initialization.
+            usage.read_before_write = 0xffff;
             loop_address = loop;
             return conditional(shader, word, start, alternate, end);
         };
@@ -90,6 +94,7 @@ private:
 
     void operand(const Xbyak::Xmm &dst, unsigned reg, unsigned relative, uint32_t selector) {
         if (reg < 16) {
+            usage.inputs |= uint16_t(1u << reg);
             movups(dst, ptr[inputs + reg * sizeof(Vec4)]);
         } else if (reg < 32) {
             if (initialized[reg - 16]) movups(dst, ptr[temporaries + (reg - 16) * sizeof(Vec4)]);
@@ -434,6 +439,11 @@ private:
 
         const bool output = ins.destination < 16;
         const unsigned index = ins.destination & 15;
+        if (output) {
+            const uint16_t bit = uint16_t(1u << index);
+            if (!(usage.written_outputs & bit) && mask != 15) usage.read_before_write |= bit;
+            usage.written_outputs |= bit;
+        }
         const auto destination = ptr[(output ? outputs : temporaries) + index * sizeof(Vec4)];
         if (mask != 15) {
             if (output || initialized[index]) movups(xmm1, destination);
@@ -475,7 +485,9 @@ struct VertexProgram {
 
 } // namespace
 
-CompiledVertex find_compiled_shader(const ShaderSetup &shader, uint32_t entry, uint64_t revision) {
+CompiledVertex find_compiled_shader(const ShaderSetup &shader, uint32_t entry, uint64_t revision,
+                                    CompiledVertexUsage *usage) {
+    if (usage) *usage = {};
     static const bool available = [] {
 #ifdef _MSC_VER
         int cpu[4];
@@ -520,6 +532,7 @@ CompiledVertex find_compiled_shader(const ShaderSetup &shader, uint32_t entry, u
     ShaderKey key{entry, shader.b, {}};
     std::memcpy(key.integers.data(), shader.i, sizeof(shader.i));
     if (auto it = cache.find(key); it != cache.end()) {
+        if (usage && it->second) *usage = it->second->usage;
         return it->second ? it->second->getCode<CompiledVertex>() : nullptr;
     }
     if (cache.size() >= 128) cache.clear();
@@ -535,6 +548,7 @@ CompiledVertex find_compiled_shader(const ShaderSetup &shader, uint32_t entry, u
     } catch (const Xbyak::Error &) {
         // The interpreter also works when executable allocations are unavailable.
     }
+    if (usage && compiled) *usage = compiled->usage;
     return compiled ? compiled->getCode<CompiledVertex>() : nullptr;
 }
 
