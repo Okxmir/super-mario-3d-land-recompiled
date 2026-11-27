@@ -5,6 +5,13 @@ from pathlib import Path
 
 from coherent_pica_fast import coherent_pica_fast
 from coherent_timer import coherent_timer
+from lab_widescreen import direct_widescreen_lists
+from lab_geometry import dense_indices, geometry_jobs
+from lab_indexed_gpu import indexed_gpu, indexed_header, indexed_pica
+from lab_lut import lut_gpu, lut_header, lut_pica
+from lab_vertex_pairs import paired_vertices
+from lab_overlap import overlap_gpu, overlap_gpu_header, overlap_pica
+from native_surface_scanout import native_surface_scanout
 from display_options import frontend_options, settings_options, settings_fields, texture_options
 from prepare_runtime import edit, prepare
 from reserve_runtime import reserve_frontend, reserve_pica
@@ -511,6 +518,7 @@ def main():
         'sm3dl::load_pack_texture(t.data, t.bytes, t.width, t.height, t.format, hd_pack_quality,\n'
         '        fresh ? std::optional<uint64_t>{fingerprint} : std::nullopt)'))
     edit(src / 'video/gpu/gpu.cpp', lambda source: bound_upload_staging(protect_sampled_textures(vulkan_scheduling(source))))
+    edit(src / 'video/gpu/gpu.cpp', lambda source: native_surface_scanout(overlap_gpu(indexed_gpu(lut_gpu(source)))))
     edit(src / 'frontend/settings.h', settings_fields)
     edit(src / 'frontend/settings.cpp', settings_options)
     edit(src / 'frontend/sdl.cpp', lambda source: reserve_frontend(frontend_options(source)))
@@ -519,7 +527,12 @@ def main():
         'void remember_alon_top_buffer(uint32_t address);\nSDL_GPUTexture *top_frame(', 1))
     edit(src / 'hle/gsp.cpp', alon_gsp)
     edit(src / 'video/pica.cpp', coherent_pica_fast)
-    edit(src / 'video/pica.cpp', idempotent_lighting_writes)
+    edit(src / 'video/pica.cpp', direct_widescreen_lists)
+    edit(src / 'video/pica.cpp', lambda source: indexed_pica(dense_indices(geometry_jobs(source))))
+    edit(src / 'video/pica.cpp', lambda source: overlap_pica(paired_vertices(source)))
+    edit(src / 'video/gpu/gpu.h', lambda source: overlap_gpu_header(indexed_header(source)))
+    edit(src / 'video/pica.cpp', lambda source: lut_pica(idempotent_lighting_writes(source)))
+    edit(src / 'video/internal.h', lut_header)
     edit(src / 'video/pica.cpp', lambda source: replace_once(source,
         '    flush_draws(); // the GPU is done with this list once everything in it is drawn',
         '    flush_draws(); // send the recorded passes before completing the guest list\n'

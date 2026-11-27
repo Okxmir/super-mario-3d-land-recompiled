@@ -6,8 +6,10 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <compare>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <list>
@@ -30,6 +32,14 @@
 namespace pica {
 namespace {
 
+void limit_output_zeroing(CompiledVertexUsage &usage) {
+    static const bool selective = false;
+    // PICA sources name inputs, temporaries or uniforms, never outputs. Only
+    // a partial write can read the old value of a written output. The caller
+    // already initializes any mapped output the shader never writes.
+    if (selective) usage.read_before_write &= usage.written_outputs;
+}
+
 // Uniform decisions are resolved once per draw state. The compiler emits supported
 // vertex-dependent branches and falls back to the interpreter for other shaders.
 // Generated functions use only caller-saved registers on both x86-64 ABIs.
@@ -45,6 +55,7 @@ public:
         } else if (!emit_specialized(shader, entry)) {
             return false;
         }
+        limit_output_zeroing(usage);
         readyRE();
 #ifdef _WIN32
         return FlushInstructionCache(GetCurrentProcess(), getCode(), getSize()) != 0;
@@ -86,6 +97,10 @@ private:
     bool compared = false;
     unsigned instructions_left = 4096;
 
+    void read_uniform(unsigned index) {
+        usage.uniform_slots[index / 64] |= uint64_t(1) << (index % 64);
+    }
+
     void splat_constant(const Xbyak::Xmm &dst, uint32_t bits) {
         mov(eax, bits);
         movd(dst, eax);
@@ -103,6 +118,8 @@ private:
             const unsigned offset = reg - 32;
             if (relative == 1 || relative == 2) {
                 if (moved_address[relative - 1]) {
+                    usage.uniform_slots[0] = ~uint64_t(0);
+                    usage.uniform_slots[1] = 0xffffffffull;
                     Xbyak::Label out_of_range, loaded;
                     lea(eax, ptr[(relative == 1 ? r10 : r11) + offset]);
                     cmp(eax, 96);
@@ -114,11 +131,15 @@ private:
                     splat_constant(dst, 0x3f800000);
                     L(loaded);
                 } else {
+                    read_uniform(offset);
                     movups(dst, ptr[uniforms + offset * sizeof(Vec4)]);
                 }
             } else {
                 const unsigned index = offset + (relative == 3 ? loop_address : 0);
-                if (index < 96) movups(dst, ptr[uniforms + index * sizeof(Vec4)]);
+                if (index < 96) {
+                    read_uniform(index);
+                    movups(dst, ptr[uniforms + index * sizeof(Vec4)]);
+                }
                 else splat_constant(dst, 0x3f800000);
             }
         }
@@ -460,6 +481,8 @@ private:
     }
 };
 
+#include "lab_vertex_pair.inc"
+
 struct ShaderKey {
     uint32_t entry, booleans;
     std::array<uint32_t, 4> integers;
@@ -474,7 +497,15 @@ struct ShaderKeyHash {
     }
 };
 
-using VertexVariants = std::unordered_map<ShaderKey, std::unique_ptr<VertexEmitter>, ShaderKeyHash>;
+struct VertexVariant {
+    std::unique_ptr<VertexEmitter> single;
+    std::unique_ptr<VertexPairEmitter> pair;
+    std::unique_ptr<VertexPairEmitter> guarded_pair;
+    bool pair_checked = false;
+    bool pair_graph = false;
+    bool guarded_pair_checked = false;
+};
+using VertexVariants = std::unordered_map<ShaderKey, VertexVariant, ShaderKeyHash>;
 
 struct VertexProgram {
     uint64_t code_hash = 0, swizzle_hash = 0;
@@ -486,8 +517,11 @@ struct VertexProgram {
 } // namespace
 
 CompiledVertex find_compiled_shader(const ShaderSetup &shader, uint32_t entry, uint64_t revision,
-                                    CompiledVertexUsage *usage) {
+                                    CompiledVertexUsage *usage, CompiledVertexPair *lab_pair,
+                                    CompiledVertexPair *lab_guarded_pair) {
     if (usage) *usage = {};
+    if (lab_pair) *lab_pair = nullptr;
+    if (lab_guarded_pair) *lab_guarded_pair = nullptr;
     static const bool available = [] {
 #ifdef _MSC_VER
         int cpu[4];
@@ -498,6 +532,19 @@ CompiledVertex find_compiled_shader(const ShaderSetup &shader, uint32_t entry, u
 #endif
     }();
     if (!available) return nullptr;
+    static const bool pair_enabled = [] {
+#ifdef _MSC_VER
+        int cpu[4];
+        __cpuid(cpu, 0);
+        if (cpu[0] < 7) return false;
+        __cpuid(cpu, 1);
+        if ((cpu[2] & 0x18000000) != 0x18000000 || (_xgetbv(0) & 6) != 6) return false;
+        __cpuidex(cpu, 7, 0);
+        return (cpu[1] & (1 << 5)) != 0;
+#else
+        return __builtin_cpu_supports("avx2") != 0;
+#endif
+    }();
 
     // Uploading another PICA program is not a reason to discard the compiled
     // code for the previous one. The same small set can alternate within one
@@ -507,11 +554,20 @@ CompiledVertex find_compiled_shader(const ShaderSetup &shader, uint32_t entry, u
     static thread_local std::list<VertexProgram> programs;
     static thread_local uint64_t last_revision = 0;
     static const bool legacy_cache = std::getenv("SM3DL_LEGACY_VERTEX_CACHE") != nullptr;
+    // For a tiny LRU, rejecting a candidate by comparing its actual words can
+    // be cheaper than hashing the full 16 KiB PICA program first. Reuse still
+    // requires all code and swizzle bytes to match, in either mode.
+    static const bool direct_program_match = false;
     if (programs.empty() || revision != last_revision) {
         if (legacy_cache) programs.clear(); // local A/B diagnostics
-        const uint64_t code_hash = sm3dl::texture_hash(reinterpret_cast<const char *>(shader.code), sizeof(shader.code));
-        const uint64_t swizzle_hash = sm3dl::texture_hash(reinterpret_cast<const char *>(shader.swizzle), sizeof(shader.swizzle));
+        const uint64_t code_hash = direct_program_match ? 0 :
+            sm3dl::texture_hash(reinterpret_cast<const char *>(shader.code), sizeof(shader.code));
+        const uint64_t swizzle_hash = direct_program_match ? 0 :
+            sm3dl::texture_hash(reinterpret_cast<const char *>(shader.swizzle), sizeof(shader.swizzle));
         auto found = std::find_if(programs.begin(), programs.end(), [&](const VertexProgram &p) {
+            if (direct_program_match)
+                return std::memcmp(p.swizzle.data(), shader.swizzle, sizeof(shader.swizzle)) == 0 &&
+                       std::memcmp(p.code.data(), shader.code, sizeof(shader.code)) == 0;
             return p.code_hash == code_hash && p.swizzle_hash == swizzle_hash &&
                    std::memcmp(p.code.data(), shader.code, sizeof(shader.code)) == 0 &&
                    std::memcmp(p.swizzle.data(), shader.swizzle, sizeof(shader.swizzle)) == 0;
@@ -531,25 +587,188 @@ CompiledVertex find_compiled_shader(const ShaderSetup &shader, uint32_t entry, u
     auto &cache = programs.front().variants;
     ShaderKey key{entry, shader.b, {}};
     std::memcpy(key.integers.data(), shader.i, sizeof(shader.i));
-    if (auto it = cache.find(key); it != cache.end()) {
-        if (usage && it->second) *usage = it->second->usage;
-        return it->second ? it->second->getCode<CompiledVertex>() : nullptr;
-    }
-    if (cache.size() >= 128) cache.clear();
-    auto &compiled = cache[key];
-    try {
-        auto code = std::make_unique<VertexEmitter>();
-        if (code->compile(shader, entry)) {
-            compiled = std::move(code);
-        } else {
-            code = std::make_unique<VertexEmitter>();
-            if (code->compile(shader, entry, true)) compiled = std::move(code);
+    auto found = cache.find(key);
+    if (found == cache.end()) {
+        if (cache.size() >= 128) cache.clear();
+        found = cache.try_emplace(key).first;
+        auto &compiled = found->second.single;
+        try {
+            auto code = std::make_unique<VertexEmitter>();
+            if (code->compile(shader, entry)) {
+                compiled = std::move(code);
+            } else {
+                code = std::make_unique<VertexEmitter>();
+                if (code->compile(shader, entry, true)) compiled = std::move(code);
+            }
+        } catch (const Xbyak::Error &) {
+            // The interpreter also works when executable allocations are unavailable.
         }
-    } catch (const Xbyak::Error &) {
-        // The interpreter also works when executable allocations are unavailable.
+        static thread_local uint64_t jit_generation = 0;
+        if (compiled) compiled->usage.lab_generation = ++jit_generation;
     }
-    if (usage && compiled) *usage = compiled->usage;
-    return compiled ? compiled->getCode<CompiledVertex>() : nullptr;
+    auto &variant = found->second;
+    if (!variant.single) return nullptr;
+    if (usage) *usage = variant.single->usage;
+    if (lab_pair && pair_enabled) {
+        if (!variant.pair_checked) {
+            variant.pair_checked = true;
+            static const bool trace = std::getenv("SM3DL_LAB_PAIR_TRACE") || std::getenv("SM3DL_LAB_VERIFY_PAIRS");
+            static const bool cache_temps = false;
+            static const bool minimum_temp_zero = false;
+            static const bool interleaved = true;
+            static const bool fast_conditions = false;
+            static const bool profile_program = false;
+            static const bool temp_plan = false;
+            static const bool fuse_matrices = false;
+            try {
+                auto code = std::make_unique<VertexPairEmitter>();
+                code->interleaved_vertices = interleaved;
+                code->fast_conditions = fast_conditions;
+                code->profile_program = profile_program;
+                bool generated = code->compile(shader, entry);
+                const bool graph = !generated;
+                if (graph) {
+                    code = std::make_unique<VertexPairEmitter>();
+                    code->interleaved_vertices = interleaved;
+                    code->fast_conditions = fast_conditions;
+                    code->profile_program = profile_program;
+                    code->look_for_matrices = fuse_matrices;
+                    generated = code->compile(shader, entry, true);
+                }
+                if (generated && !(code->usage.inputs & ~variant.single->usage.inputs) &&
+                    code->usage.written_outputs == variant.single->usage.written_outputs &&
+                    !(code->usage.read_before_write & ~variant.single->usage.read_before_write)) {
+                    variant.pair = std::move(code);
+                    variant.pair_graph = graph;
+                    if (cache_temps || (graph && (minimum_temp_zero || temp_plan))) {
+                        auto cached = std::make_unique<VertexPairEmitter>();
+                        cached->interleaved_vertices = interleaved;
+                        cached->fast_conditions = fast_conditions;
+                        cached->profile_program = profile_program;
+                        cached->look_for_matrices = fuse_matrices;
+                        const bool keep_regs = cache_temps && cached->cache_frequent_temps(variant.pair->temp_hits);
+                        if (graph && temp_plan) {
+                            cached->incoming_temp_plan = variant.pair->computed_temp_plan;
+                            cached->graph_temp_zero = variant.pair->planned_temp_zero;
+                        } else if (graph && minimum_temp_zero) cached->graph_temp_zero = variant.pair->required_temp_zero;
+                        const bool fewer_zeroes = cached->graph_temp_zero != 0xffff;
+                        if ((keep_regs || fewer_zeroes || !cached->incoming_temp_plan.empty()) && cached->compile(shader, entry, graph)) {
+                            if (trace && fewer_zeroes) std::fprintf(stderr,
+                                "vertex pair temporaries: entry 0x%x initializes %d of 16%s\n",
+                                entry, std::popcount(cached->graph_temp_zero), cached->incoming_temp_plan.empty() ? "" : " (flow plan)");
+                            variant.pair = std::move(cached);
+                        }
+                    }
+                    if (graph && fuse_matrices && !cache_temps && variant.pair->lab_profile.matrix_groups) {
+                        auto fused = std::make_unique<VertexPairEmitter>();
+                        fused->interleaved_vertices = interleaved;
+                        fused->fast_conditions = fast_conditions;
+                        fused->profile_program = profile_program;
+                        fused->incoming_temp_plan = variant.pair->incoming_temp_plan;
+                        fused->graph_temp_zero = variant.pair->graph_temp_zero;
+                        fused->fuse_matrices = true;
+                        if (fused->compile(shader, entry, true) && fused->matrices.count &&
+                            !(fused->usage.inputs & ~variant.single->usage.inputs) &&
+                            fused->usage.written_outputs == variant.single->usage.written_outputs &&
+                            !(fused->usage.read_before_write & ~variant.single->usage.read_before_write)) {
+                            if (trace) std::fprintf(stderr, "vertex pair matrix fusion: entry 0x%x, %u matrices\n",
+                                                    entry, fused->matrices.count);
+                            variant.pair = std::move(fused);
+                        }
+                    }
+                } else if (trace) {
+                    std::fprintf(stderr, "vertex pair declined: entry 0x%x, booleans 0x%x, opcode 0x%x, compiled %d\n",
+                                 entry, shader.b, code->rejected_opcode, generated);
+                }
+            } catch (const Xbyak::Error &e) {
+                if (trace) std::fprintf(stderr, "vertex pair codegen failure: %s\n", e.what());
+                // Unsupported program: keep using the existing single-vertex kernel.
+            }
+        }
+        if (variant.pair) {
+            *lab_pair = variant.pair->getCode<CompiledVertexPair>();
+            if (usage && variant.pair->profile_program) usage->lab_profile = &variant.pair->lab_profile;
+            if (usage && variant.pair->matrices.count) usage->lab_matrices = &variant.pair->matrices;
+        }
+        static const bool guarded = false;
+        if (variant.pair && lab_guarded_pair && guarded) {
+            if (!variant.guarded_pair_checked) {
+                variant.guarded_pair_checked = true;
+                try {
+                    auto code = std::make_unique<VertexPairEmitter>();
+                    code->graph_temp_zero = variant.pair->graph_temp_zero;
+                    code->temp_regs = variant.pair->temp_regs;
+                    code->incoming_temp_plan = variant.pair->incoming_temp_plan;
+                    code->interleaved_vertices = variant.pair->interleaved_vertices;
+                    code->fast_conditions = variant.pair->fast_conditions;
+                    code->fuse_matrices = variant.pair->fuse_matrices;
+                    code->defer_invalid_multiply = true;
+                    const auto &base = variant.pair->matrices;
+                    if (code->compile(shader, entry, variant.pair_graph) && code->matrices.count == base.count &&
+                        std::memcmp(code->matrices.rows, base.rows, sizeof base.rows) == 0)
+                        variant.guarded_pair = std::move(code);
+                } catch (const Xbyak::Error &) {
+                    // If the guarded variant cannot be generated, keep the exact pair.
+                }
+            }
+            if (variant.guarded_pair) *lab_guarded_pair = variant.guarded_pair->getCode<CompiledVertexPair>();
+        }
+    }
+    return variant.single->getCode<CompiledVertex>();
+}
+
+int lab_verify_fused_matrix() {
+#ifdef _MSC_VER
+    int cpu[4];
+    __cpuid(cpu, 0);
+    if (cpu[0] < 7) return 77;
+    __cpuid(cpu, 1);
+    if ((cpu[2] & 0x18000000) != 0x18000000 || (_xgetbv(0) & 6) != 6) return 77;
+    __cpuidex(cpu, 7, 0);
+    if ((cpu[1] & (1 << 5)) == 0) return 77;
+#else
+    if (!__builtin_cpu_supports("avx2")) return 77;
+#endif
+    ShaderSetup program{};
+    constexpr unsigned order[4]{2, 0, 3, 1};
+    for (unsigned i = 0; i < 4; ++i) {
+        const unsigned row = order[i];
+        program.code[i] = (2u << 26) | (3u << 21) | ((32u + 9u + row) << 12) | i;
+        program.swizzle[i] = (8u >> row) | (0x36u << 4) | (0x36u << 13);
+    }
+    program.code[4] = 0x22u << 26;
+    uint32_t random = 0x79f1802b;
+    const auto sample = [&] {
+        random ^= random << 13; random ^= random >> 17; random ^= random << 5;
+        constexpr uint32_t edges[]{0, 0x80000000u, 1, 0x80000001u, 0x7f800000u,
+            0xff800000u, 0x7fc61901u, 0xffc17b1au, 0x7f7fffffu, 0xff7fffffu};
+        return std::bit_cast<float>((random & 3) == 0 ? edges[(random >> 2) % std::size(edges)] : random);
+    };
+    for (const bool interleaved : {false, true}) {
+        VertexPairEmitter original, fused;
+        original.interleaved_vertices = fused.interleaved_vertices = interleaved;
+        fused.fuse_matrices = true;
+        if (!original.compile(program, 0, true) || !fused.compile(program, 0, true) || fused.matrices.count != 1)
+            return 1;
+        const auto reference = original.getCode<CompiledVertexPair>();
+        const auto variant = fused.getCode<CompiledVertexPair>();
+        for (unsigned trial = 0; trial < 8192; ++trial) {
+            Vec4 in[32]{}, legacy[32]{}, actual[32]{}, scratch[43];
+            Vec4 uniforms[100]{};
+            for (unsigned lane = 0; lane < 2; ++lane)
+                for (unsigned col = 0; col < 4; ++col) in[lane * (interleaved ? 1 : 16)][col] = sample();
+            for (auto &u : uniforms) for (auto &v : u.v) v = sample();
+            for (unsigned col = 0; col < 4; ++col) for (unsigned row = 0; row < 4; ++row)
+                std::memcpy(&uniforms[96+col][row], &uniforms[fused.matrices.rows[0][row]][col], sizeof(float));
+            if (!reference(uniforms, in, legacy, scratch) || !variant(uniforms, in, actual, scratch) ||
+                std::memcmp(legacy, actual, sizeof actual) != 0) {
+                std::fprintf(stderr, "matrix fusion differs at trial %u (%s)\n", trial,
+                             interleaved ? "interleaved" : "sequential");
+                return 2;
+            }
+        }
+    }
+    return 0;
 }
 
 } // namespace pica

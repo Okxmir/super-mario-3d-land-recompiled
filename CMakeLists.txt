@@ -42,7 +42,9 @@ else()
 endif()
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     tools/prepare_runtime.py tools/alon_runtime.py tools/display_options.py tools/reserve_runtime.py
-    tools/coherent_pica_fast.py tools/coherent_timer.py)
+    tools/coherent_pica_fast.py tools/coherent_timer.py tools/lab_widescreen.py tools/lab_geometry.py
+    tools/lab_indexed_gpu.py tools/lab_lut.py tools/lab_vertex_pairs.py tools/lab_overlap.py
+    tools/native_surface_scanout.py)
 execute_process(
     COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tools/alon_runtime.py"
             "${UPSTREAM}/clockwork-master/runtime" "${RUNTIME}"
